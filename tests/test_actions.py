@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 
 from unittest.mock import patch
@@ -76,3 +77,69 @@ class ActionRulesTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.title, "Stop requested")
         self.assertIn("still running", result.detail)
+
+    def test_execute_recipe_turning_on_launchd_blocker_disables_and_boots_out_services(self) -> None:
+        controller = ActionController(system_name="Darwin")
+        commands_run: list[list[str]] = []
+
+        def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            commands_run.append(command)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with (
+            patch.object(controller, "recipe_state", return_value=False),
+            patch("src.actions.os.getuid", return_value=501),
+            patch.object(controller, "_command_path", side_effect=lambda command: f"/usr/bin/{command}"),
+            patch("src.actions.subprocess.run", side_effect=fake_run),
+            patch.object(controller, "_kill_named_processes", return_value=type("Result", (), {"ok": True, "detail": "Stopped 0 process(es)."})()),
+        ):
+            result = controller.execute_recipe("toggle-icloud-sync")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            commands_run,
+            [
+                ["/usr/bin/launchctl", "disable", "gui/501/com.apple.bird"],
+                ["/usr/bin/launchctl", "bootout", "gui/501/com.apple.bird"],
+                ["/usr/bin/launchctl", "disable", "gui/501/com.apple.cloudd"],
+                ["/usr/bin/launchctl", "bootout", "gui/501/com.apple.cloudd"],
+            ],
+        )
+
+    def test_execute_recipe_admin_required_uses_sudo(self) -> None:
+        controller = ActionController(system_name="Darwin")
+        commands_run: list[list[str]] = []
+
+        def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            commands_run.append(command)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with (
+            patch.object(controller, "recipe_state", return_value=False),
+            patch("src.actions.os.geteuid", return_value=501),
+            patch.object(controller, "_command_path", side_effect=lambda command: f"/usr/bin/{command}"),
+            patch("src.actions.subprocess.run", side_effect=fake_run),
+            patch.object(controller, "_kill_named_processes", return_value=type("Result", (), {"ok": True, "detail": "Stopped 0 process(es)."})()),
+        ):
+            result = controller.execute_recipe("toggle-system-update-checks")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            commands_run,
+            [["/usr/bin/sudo", "-n", "/usr/bin/softwareupdate", "--schedule", "off"]],
+        )
+
+    def test_recipe_state_admin_required_uses_sudo(self) -> None:
+        controller = ActionController(system_name="Darwin")
+        with (
+            patch("src.actions.os.geteuid", return_value=501),
+            patch.object(controller, "_command_path", side_effect=lambda command: f"/usr/bin/{command}"),
+            patch("src.actions._softwareupdate_schedule_disabled", return_value=True) as schedule_disabled,
+        ):
+            self.assertTrue(controller.recipe_state("toggle-system-update-checks"))
+
+        schedule_disabled.assert_called_once_with(
+            "/usr/bin/softwareupdate",
+            sudo_command="/usr/bin/sudo",
+            use_sudo=True,
+        )

@@ -55,26 +55,6 @@ def recipe_catalog(system_name: str = "Darwin") -> dict[str, Recipe]:
             temporary=False,
             disruptive=False,
         ),
-        "open-system-settings": Recipe(
-            recipe_id="open-system-settings",
-            title="Open System Settings",
-            summary="Opens System Settings so you can disable sync and update features persistently.",
-            instructions="Use this for settings that Apple does not expose as a stable command-line toggle.",
-            command_preview="open -a 'System Settings'",
-            admin_required=False,
-            temporary=False,
-            disruptive=False,
-        ),
-        "open-app-store": Recipe(
-            recipe_id="open-app-store",
-            title="Open App Store",
-            summary="Open the App Store app so you can disable app auto-updates manually.",
-            instructions="Useful when App Store background traffic keeps coming back.",
-            command_preview="open -a 'App Store'",
-            admin_required=False,
-            temporary=False,
-            disruptive=False,
-        ),
     }
 
 
@@ -84,13 +64,9 @@ def recipe_ids_for_process(name: str, command: str | None, system_name: str = "D
     signature = " ".join(part for part in [name, command or ""]).casefold()
     recipe_ids: list[str] = []
     if any(token in signature for token in ("bird", "cloudd", "icloud")):
-        recipe_ids.extend(["pause-icloud-sync", "open-system-settings"])
+        recipe_ids.append("pause-icloud-sync")
     if any(token in signature for token in ("softwareupdated", "storeassetd", "storedownloadd", "appstoreagent")):
-        recipe_ids.extend(
-            ["pause-app-store-downloads", "disable-system-update-checks", "open-system-settings", "open-app-store"]
-        )
-    if any(token in signature for token in ("dropbox", "onedrive", "google drive", "creative cloud", "steam")):
-        recipe_ids.append("open-system-settings")
+        recipe_ids.extend(["pause-app-store-downloads", "disable-system-update-checks"])
     return sorted(set(recipe_ids))
 
 
@@ -147,11 +123,6 @@ class ActionController:
             return self._run_recipe_command(recipe, [self._command_path("softwareupdate"), "--schedule", "off"])
         if recipe_id == "enable-system-update-checks":
             return self._run_recipe_command(recipe, [self._command_path("softwareupdate"), "--schedule", "on"])
-        if recipe_id == "open-system-settings":
-            return self._run_recipe_command(recipe, [self._command_path("open"), "-a", "System Settings"])
-        if recipe_id == "open-app-store":
-            return self._run_recipe_command(recipe, [self._command_path("open"), "-a", "App Store"])
-
         return ActionResult(ok=False, title="Unknown preset", detail=f"No executor is wired for {recipe_id}.")
 
     def _kill_named_processes(self, recipe: Recipe, process_names: Iterable[str]) -> ActionResult:

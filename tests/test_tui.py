@@ -6,13 +6,13 @@ from src.actions import ActionController, recipe_catalog
 from src.collector import BandwidthCollector
 from src.models import ProcessUsage, Snapshot
 from src.tui import (
+    commands_line_text,
     detail_block_height,
     total_rate_text,
     process_identity,
     TuiApp,
     format_bytes,
     header_row_text,
-    preset_line_text,
     process_row_text,
     recipe_shortcuts,
     selected_summary_text,
@@ -47,8 +47,8 @@ class TuiHelpersTests(unittest.TestCase):
         self.assertIn("b", shortcuts)
         self.assertEqual(shortcuts["a"].recipe_id, "pause-icloud-sync")
 
-    def test_preset_line_omits_empty_platform_catalog(self) -> None:
-        self.assertEqual(preset_line_text("Linux", {}), "")
+    def test_commands_line_includes_common_controls_without_presets(self) -> None:
+        self.assertEqual(commands_line_text({}), "Commands: q quit | r refresh | h hide<1KB | t stop | x kill")
 
     def test_format_bytes_uses_compact_units(self) -> None:
         self.assertEqual(format_bytes(512), "512B")
@@ -106,7 +106,7 @@ class TuiHelpersTests(unittest.TestCase):
 
         summary_lines = wrapped_lines(selected_summary_text(process), 32)
         self.assertGreater(len(summary_lines), 1)
-        self.assertEqual(detail_block_height(process, 32), len(summary_lines) + 3)
+        self.assertEqual(detail_block_height(process, 32), len(summary_lines) + 2)
 
     def test_process_identity_uses_pid_command_and_name(self) -> None:
         process = self._process(42, "curl")
@@ -198,6 +198,7 @@ class TuiHelpersTests(unittest.TestCase):
         self.assertEqual(app.selected_index, 0)
         self.assertIsNotNone(app.snapshot)
         self.assertEqual(app._selected_process().pid, 200)
+        self.assertFalse(app.status_message.endswith("."))
 
     def test_apply_snapshot_clears_selection_if_selected_process_disappears(self) -> None:
         app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))

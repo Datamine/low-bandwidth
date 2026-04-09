@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import deque
 import curses
 from dataclasses import dataclass, field
-import math
 import queue
 import threading
 import time
@@ -32,10 +31,16 @@ def recipe_shortcuts(recipes: list[Recipe]) -> dict[str, Recipe]:
     return {key: recipe for key, recipe in zip(keys, recipes, strict=False)}
 
 
-def preset_line_text(platform_name: str, shortcuts: dict[str, Recipe]) -> str:
-    if shortcuts:
-        return "Presets: " + " | ".join(f"{key} {truncate(recipe.title, 22)}" for key, recipe in shortcuts.items())
-    return ""
+def commands_line_text(shortcuts: dict[str, Recipe]) -> str:
+    commands = [
+        "q quit",
+        "r refresh",
+        "h hide<1KB",
+        "t stop",
+        "x kill",
+    ]
+    commands.extend(f"{key} {truncate(recipe.title, 22)}" for key, recipe in shortcuts.items())
+    return "Commands: " + " | ".join(commands)
 
 
 def format_bytes(value: float) -> str:
@@ -138,7 +143,7 @@ def selected_summary_text(selected: ProcessUsage) -> str:
 def detail_block_height(selected: ProcessUsage | None, width: int) -> int:
     if selected is None:
         return 2
-    return len(wrapped_lines(selected_summary_text(selected), width)) + 3
+    return len(wrapped_lines(selected_summary_text(selected), width)) + 2
 
 
 def process_identity(process: ProcessUsage | None) -> tuple[int | None, str | None, str] | None:
@@ -259,7 +264,7 @@ class TuiApp:
         if previous_identity is not None and self.selected_index is None and process_count > 0:
             self.status_message = "Selected process disappeared on refresh."
             return
-        self.status_message = f"Updated {time.strftime('%H:%M:%S')}."
+        self.status_message = f"Updated {time.strftime('%H:%M:%S')}"
 
     def _request_snapshot_refresh(self, message: str | None = None) -> None:
         if message is not None:
@@ -372,10 +377,7 @@ class TuiApp:
             if snapshot.averaging_window_seconds is not None
             else f"sample={snapshot.sample_seconds}s"
         )
-        summary = (
-            f"collector={snapshot.collector} {window_summary} "
-            f"processes={len(self._visible_processes())}/{len(snapshot.processes)} q=quit r=refresh h=filter t=stop x=kill"
-        )
+        summary = f"collector={snapshot.collector} {window_summary} processes={len(self._visible_processes())}/{len(snapshot.processes)}"
         self._write(stdscr, row, 0, summary, width, self._attr("muted"))
         row += 1
 
@@ -383,12 +385,10 @@ class TuiApp:
             self._write(stdscr, row, 0, line, width, self._attr("muted"))
             row += 1
 
-        preset_line = preset_line_text(snapshot.platform, shortcuts)
-        if preset_line:
-            self._write(stdscr, row, 0, preset_line, width, self._attr("muted"))
-            row += 2
-        else:
+        for line in wrapped_lines(commands_line_text(shortcuts), width):
+            self._write(stdscr, row, 0, line, width, curses.A_BOLD)
             row += 1
+        row += 1
 
         visible_processes = self._visible_processes()
         layout = table_layout(visible_processes, width)
@@ -417,7 +417,7 @@ class TuiApp:
                 attr = self._attr("selected") if self.selected_index is not None and index == self.selected_index else curses.A_NORMAL
                 self._write(stdscr, row, 0, row_text, width, attr)
 
-        self._draw_selected_block(stdscr, detail_top, width, selected, shortcuts)
+        self._draw_selected_block(stdscr, detail_top, width, selected)
         stdscr.refresh()
 
     def _draw_selected_block(
@@ -426,7 +426,6 @@ class TuiApp:
         top: int,
         width: int,
         selected: ProcessUsage | None,
-        shortcuts: dict[str, Recipe],
     ) -> None:
         if selected is None:
             self._write(stdscr, top, 0, "Selected: none", width, curses.A_BOLD)
@@ -445,7 +444,7 @@ class TuiApp:
             self._write(stdscr, top + offset, 0, line, width, curses.A_BOLD)
 
         next_row = top + len(selected_lines)
-        self._write(stdscr, next_row, 0, f"Ports: {format_ports(selected.ports)}", width, self._attr("muted") | curses.A_BOLD)
+        self._write(stdscr, next_row, 0, f"Ports: {format_ports(selected.ports)}", width, curses.A_BOLD)
 
         self._write(
             stdscr,
@@ -455,16 +454,6 @@ class TuiApp:
             width,
             self._status_attr(),
         )
-
-        history_line = "Recent: "
-        if self.history:
-            history_line += " | ".join(
-                truncate(f"{item.title}: {item.detail}", max(18, math.floor((width - 10) / len(self.history))))
-                for item in self.history
-            )
-        else:
-            history_line += "No actions yet."
-        self._write(stdscr, next_row + 2, 0, history_line, width, self._attr("muted"))
 
     def _table_start(self, visible_rows: int) -> int:
         process_count = len(self._visible_processes())

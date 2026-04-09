@@ -50,7 +50,7 @@ class TuiHelpersTests(unittest.TestCase):
     def test_commands_line_includes_common_controls_without_presets(self) -> None:
         self.assertEqual(
             commands_line_text({}, {}, True),
-            "Commands: q quit | h [on] hide<1KB | t stop | x kill",
+            "Commands: q quit | h hide<1KB [on] | t stop | x kill",
         )
 
     def test_commands_line_includes_toggle_states_for_recipes(self) -> None:
@@ -66,7 +66,7 @@ class TuiHelpersTests(unittest.TestCase):
                 },
                 True,
             ),
-            "Commands: q quit | h [on] hide<1KB | t stop | x kill | a [on] iCloud blocker | b [off] App Store blocker | c [on] Update check blocker",
+            "Commands: q quit | h hide<1KB [on] | t stop | x kill | a iCloud blocker [on] | b App Store blocker [off] | c Update check blocker [on]",
         )
 
     def test_format_bytes_uses_compact_units(self) -> None:

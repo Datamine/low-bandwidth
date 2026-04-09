@@ -38,12 +38,12 @@ def _toggle_marker(is_on: bool) -> str:
 def commands_line_text(shortcuts: dict[str, Recipe], recipe_states: dict[str, bool], hide_small_processes: bool) -> str:
     commands = [
         "q quit",
-        f"h {_toggle_marker(hide_small_processes)} hide<1KB",
+        f"h hide<1KB {_toggle_marker(hide_small_processes)}",
         "t stop",
         "x kill",
     ]
     commands.extend(
-        f"{key} {_toggle_marker(recipe_states.get(recipe.recipe_id, False))} {truncate(recipe.title, 22)}"
+        f"{key} {truncate(recipe.title, 22)} {_toggle_marker(recipe_states.get(recipe.recipe_id, False))}"
         for key, recipe in shortcuts.items()
     )
     return "Commands: " + " | ".join(commands)

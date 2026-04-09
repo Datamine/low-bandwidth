@@ -35,6 +35,9 @@ class TuiHelpersTests(unittest.TestCase):
             download_bytes=0,
             upload_bytes=0,
             total_bytes=0,
+            instant_download_rate_bps=0,
+            instant_upload_rate_bps=0,
+            instant_total_rate_bps=0,
             download_rate_bps=0,
             upload_rate_bps=0,
             total_rate_bps=0,
@@ -91,12 +94,15 @@ class TuiHelpersTests(unittest.TestCase):
             download_bytes=567,
             upload_bytes=1843,
             total_bytes=2410,
+            instant_download_rate_bps=20,
+            instant_upload_rate_bps=20,
+            instant_total_rate_bps=40,
             download_rate_bps=20,
             upload_rate_bps=20,
             total_rate_bps=40,
             is_background=False,
         )
-        layout = table_layout([process], 96)
+        layout = table_layout([process], 128)
         header = header_row_text(layout)
         row = process_row_text(1, process, layout)
 
@@ -107,7 +113,8 @@ class TuiHelpersTests(unittest.TestCase):
         self.assertEqual(row.index("567B") + len("567B"), header.index("Down") + len("Down"))
         self.assertEqual(row.index("1.8K") + len("1.8K"), header.index("Up") + len("Up"))
         self.assertEqual(row.index("2.4K") + len("2.4K"), header.index("Total") + len("Total"))
-        self.assertEqual(row.index("40B") + len("40B"), header.index("Rate") + len("Rate"))
+        self.assertEqual(row.index("40B") + len("40B"), header.index("Instant Rate") + len("Instant Rate"))
+        self.assertEqual(row.rindex("40B") + len("40B"), header.index("60s Avg Rate") + len("60s Avg Rate"))
 
     def test_detail_block_height_grows_for_wrapped_selected_summary(self) -> None:
         process = self._process(
@@ -119,6 +126,9 @@ class TuiHelpersTests(unittest.TestCase):
         process.download_bytes = 1024
         process.upload_bytes = 128
         process.total_bytes = 1152
+        process.instant_download_rate_bps = 512
+        process.instant_upload_rate_bps = 64
+        process.instant_total_rate_bps = 576
         process.download_rate_bps = 512
         process.upload_rate_bps = 64
         process.total_rate_bps = 576
@@ -133,11 +143,11 @@ class TuiHelpersTests(unittest.TestCase):
 
     def test_total_rate_text_summarizes_visible_rates(self) -> None:
         first = self._process(100, "first")
-        first.upload_rate_bps = 100
-        first.download_rate_bps = 23
+        first.instant_upload_rate_bps = 100
+        first.instant_download_rate_bps = 23
         second = self._process(200, "second")
-        second.upload_rate_bps = 924
-        second.download_rate_bps = 1001
+        second.instant_upload_rate_bps = 924
+        second.instant_download_rate_bps = 1001
         self.assertEqual(total_rate_text([first, second]), "Total Rate: 2.0K (1.0K Up / 1.0K Down)")
 
     def test_process_row_text_can_show_killed_prefix(self) -> None:
@@ -145,6 +155,12 @@ class TuiHelpersTests(unittest.TestCase):
         layout = table_layout([process], 96)
         row = process_row_text(0, process, layout, display_name="[killed] curl")
         self.assertIn("[killed] curl", row)
+
+    def test_display_name_can_show_stopped_prefix(self) -> None:
+        app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))
+        process = self._process(42, "curl")
+        app._stopped_processes.add(process_identity(process))
+        self.assertEqual(app._display_name(process), "[stopped] curl")
 
     def test_toggle_hide_small_processes_hides_rows_below_1kb(self) -> None:
         app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))

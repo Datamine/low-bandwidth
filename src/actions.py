@@ -7,6 +7,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import time
 from typing import NamedTuple
 
 from .models import ActionResult, Recipe
@@ -162,8 +163,12 @@ class ActionController:
                 detail=f"macOS refused to signal PID {pid}. Try running the dashboard with higher privileges.",
             )
 
-        verb = "Force stopped" if signal_name == signal.SIGKILL else "Stopped"
-        return ActionResult(ok=True, title=verb, detail=f"Sent {signal_name.name} to PID {pid}.")
+        if signal_name == signal.SIGTERM:
+            if _wait_for_process_exit(pid):
+                return ActionResult(ok=True, title="Stopped", detail=f"PID {pid} exited after SIGTERM.")
+            return ActionResult(ok=True, title="Stop requested", detail=f"Sent SIGTERM to PID {pid}, but it is still running.")
+
+        return ActionResult(ok=True, title="Force stopped", detail=f"Sent SIGKILL to PID {pid}.")
 
     def execute_recipe(self, recipe_id: str) -> ActionResult:
         config = self._toggle_recipes.get(recipe_id)
@@ -313,6 +318,19 @@ def _softwareupdate_schedule_disabled(softwareupdate: str) -> bool:
         return True
     if "automatic check is on" in lowered:
         return False
+    return False
+
+
+def _wait_for_process_exit(pid: int, timeout_seconds: float = 1.0) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        time.sleep(0.05)
     return False
 
 

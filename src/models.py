@@ -17,6 +17,9 @@ class ProcessUsage:
     download_bytes: int
     upload_bytes: int
     total_bytes: int
+    instant_download_rate_bps: float
+    instant_upload_rate_bps: float
+    instant_total_rate_bps: float
     download_rate_bps: float
     upload_rate_bps: float
     total_rate_bps: float

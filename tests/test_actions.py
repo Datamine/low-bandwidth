@@ -52,3 +52,27 @@ class ActionRulesTests(unittest.TestCase):
                     "toggle-system-update-checks": True,
                 },
             )
+
+    def test_execute_process_action_marks_confirmed_stop(self) -> None:
+        controller = ActionController(system_name="Darwin")
+        with (
+            patch("src.actions.os.kill") as mock_kill,
+            patch("src.actions._wait_for_process_exit", return_value=True),
+        ):
+            result = controller.execute_process_action(123, "terminate")
+        mock_kill.assert_called_once()
+        self.assertTrue(result.ok)
+        self.assertEqual(result.title, "Stopped")
+        self.assertIn("exited after SIGTERM", result.detail)
+
+    def test_execute_process_action_leaves_unconfirmed_stop_as_request(self) -> None:
+        controller = ActionController(system_name="Darwin")
+        with (
+            patch("src.actions.os.kill") as mock_kill,
+            patch("src.actions._wait_for_process_exit", return_value=False),
+        ):
+            result = controller.execute_process_action(123, "terminate")
+        mock_kill.assert_called_once()
+        self.assertTrue(result.ok)
+        self.assertEqual(result.title, "Stop requested")
+        self.assertIn("still running", result.detail)

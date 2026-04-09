@@ -15,10 +15,11 @@ from .models import ActionResult, ProcessUsage, Recipe, Snapshot
 AUTO_REFRESH_DELAY_SECONDS = 0.25
 HIDE_SMALL_PROCESS_THRESHOLD_BYTES = 1024
 TABLE_BYTES_WIDTH = 8
+TABLE_RATE_WIDTH = 12
 TABLE_PREFERRED_PROCESS_WIDTH = 18
 TABLE_PREFERRED_PORTS_WIDTH = 18
 TABLE_MIN_FLEX_WIDTH = 8
-TABLE_COLUMN_GAP_COUNT = 6
+TABLE_COLUMN_GAP_COUNT = 7
 
 
 def run_tui(collector: BandwidthCollector, actions: ActionController) -> None:
@@ -87,6 +88,7 @@ class TableLayout:
     process_width: int
     ports_width: int
     bytes_width: int
+    rate_width: int
 
 
 def table_layout(processes: list[ProcessUsage], available_width: int | None = None) -> TableLayout:
@@ -96,6 +98,7 @@ def table_layout(processes: list[ProcessUsage], available_width: int | None = No
         process_width=TABLE_PREFERRED_PROCESS_WIDTH,
         ports_width=TABLE_PREFERRED_PORTS_WIDTH,
         bytes_width=TABLE_BYTES_WIDTH,
+        rate_width=TABLE_RATE_WIDTH,
     )
     if available_width is None:
         return layout
@@ -103,6 +106,7 @@ def table_layout(processes: list[ProcessUsage], available_width: int | None = No
     fixed_width = (
         layout.pid_width
         + (layout.bytes_width * 4)
+        + (layout.rate_width * 2)
         + TABLE_COLUMN_GAP_COUNT
     )
     available_flex_width = max(TABLE_MIN_FLEX_WIDTH * 2, available_width - fixed_width)
@@ -117,6 +121,7 @@ def table_layout(processes: list[ProcessUsage], available_width: int | None = No
         process_width=process_width,
         ports_width=ports_width,
         bytes_width=layout.bytes_width,
+        rate_width=layout.rate_width,
     )
 
 
@@ -129,7 +134,8 @@ def process_row_text(index: int, process: ProcessUsage, layout: TableLayout, dis
         f"{format_bytes(process.download_bytes):>{layout.bytes_width}} "
         f"{format_bytes(process.upload_bytes):>{layout.bytes_width}} "
         f"{format_bytes(process.total_bytes):>{layout.bytes_width}} "
-        f"{format_bytes(process.total_rate_bps):>{layout.bytes_width}}"
+        f"{format_bytes(process.instant_total_rate_bps):>{layout.rate_width}} "
+        f"{format_bytes(process.total_rate_bps):>{layout.rate_width}}"
     )
 
 
@@ -138,7 +144,7 @@ def header_row_text(layout: TableLayout) -> str:
         f"{'PID':>{layout.pid_width}} "
         f"{'Process':<{layout.process_width}} {'Ports':<{layout.ports_width}} "
         f"{'Down':>{layout.bytes_width}} {'Up':>{layout.bytes_width}} "
-        f"{'Total':>{layout.bytes_width}} {'Rate':>{layout.bytes_width}}"
+        f"{'Total':>{layout.bytes_width}} {'Instant Rate':>{layout.rate_width}} {'60s Avg Rate':>{layout.rate_width}}"
     )
 
 
@@ -159,8 +165,8 @@ def process_identity(process: ProcessUsage | None) -> tuple[int | None, str | No
 
 
 def total_rate_text(processes: list[ProcessUsage]) -> str:
-    upload_rate = sum(process.upload_rate_bps for process in processes)
-    download_rate = sum(process.download_rate_bps for process in processes)
+    upload_rate = sum(process.instant_upload_rate_bps for process in processes)
+    download_rate = sum(process.instant_download_rate_bps for process in processes)
     total_rate = upload_rate + download_rate
     return f"Total Rate: {format_bytes(total_rate)} ({format_bytes(upload_rate)} Up / {format_bytes(download_rate)} Down)"
 
@@ -182,6 +188,7 @@ class TuiApp:
     _collector_thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _recipe_states: dict[str, bool] = field(default_factory=dict, init=False, repr=False)
     _killed_processes: set[tuple[int | None, str | None, str]] = field(default_factory=set, init=False, repr=False)
+    _stopped_processes: set[tuple[int | None, str | None, str]] = field(default_factory=set, init=False, repr=False)
 
     def run(self, stdscr: curses.window) -> None:
         curses.curs_set(0)
@@ -248,9 +255,14 @@ class TuiApp:
             self.status_message = "No selectable PID on the current row."
             return
         selected_identity = process_identity(process)
-        self._record_result(self.actions.execute_process_action(process.pid, action))
-        if action == "kill" and selected_identity is not None:
-            self._killed_processes.add(selected_identity)
+        result = self.actions.execute_process_action(process.pid, action)
+        self._record_result(result)
+        if selected_identity is not None:
+            if action == "kill" and result.ok:
+                self._killed_processes.add(selected_identity)
+                self._stopped_processes.discard(selected_identity)
+            if action == "terminate" and result.ok and result.title == "Stopped":
+                self._stopped_processes.add(selected_identity)
         self._request_snapshot_refresh("Refreshing snapshot…")
 
     def _apply_snapshot(self, snapshot: Snapshot) -> None:
@@ -258,6 +270,7 @@ class TuiApp:
         self.snapshot = snapshot
         current_identities = {process_identity(process) for process in snapshot.processes}
         self._killed_processes.intersection_update(identity for identity in current_identities if identity is not None)
+        self._stopped_processes.intersection_update(identity for identity in current_identities if identity is not None)
         visible_processes = self._visible_processes()
         process_count = len(visible_processes)
         if process_count == 0:
@@ -374,6 +387,8 @@ class TuiApp:
     def _display_name(self, process: ProcessUsage) -> str:
         if process_identity(process) in self._killed_processes:
             return f"[killed] {process.display_name}"
+        if process_identity(process) in self._stopped_processes:
+            return f"[stopped] {process.display_name}"
         return process.display_name
 
     def _draw(self, stdscr: curses.window) -> None:

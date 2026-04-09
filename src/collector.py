@@ -221,8 +221,10 @@ class BandwidthCollector:
             return snapshot
 
         now = time.time()
+        current_keys: set[tuple[int | None, str]] = set()
         for process in snapshot.processes:
             key = (process.pid, process.name)
+            current_keys.add(key)
             samples = self._rolling_samples.setdefault(key, deque())
             samples.append(
                 SamplePoint(timestamp=now, download_bytes=process.download_bytes, upload_bytes=process.upload_bytes)
@@ -251,6 +253,9 @@ class BandwidthCollector:
                     download_bytes=download_bytes,
                     upload_bytes=upload_bytes,
                     total_bytes=total_bytes,
+                    instant_download_rate_bps=process.instant_download_rate_bps if key in current_keys else 0.0,
+                    instant_upload_rate_bps=process.instant_upload_rate_bps if key in current_keys else 0.0,
+                    instant_total_rate_bps=process.instant_total_rate_bps if key in current_keys else 0.0,
                     download_rate_bps=download_bytes / window_seconds,
                     upload_rate_bps=upload_bytes / window_seconds,
                     total_rate_bps=total_bytes / window_seconds,
@@ -320,6 +325,9 @@ class BandwidthCollector:
                     download_bytes=download_bytes,
                     upload_bytes=upload_bytes,
                     total_bytes=total_bytes,
+                    instant_download_rate_bps=download_bytes / sample_window,
+                    instant_upload_rate_bps=upload_bytes / sample_window,
+                    instant_total_rate_bps=total_bytes / sample_window,
                     download_rate_bps=download_bytes / sample_window,
                     upload_rate_bps=upload_bytes / sample_window,
                     total_rate_bps=total_bytes / sample_window,
@@ -744,6 +752,9 @@ def _merge_rows(
                 download_bytes=0,
                 upload_bytes=0,
                 total_bytes=0,
+                instant_download_rate_bps=0.0,
+                instant_upload_rate_bps=0.0,
+                instant_total_rate_bps=0.0,
                 download_rate_bps=0.0,
                 upload_rate_bps=0.0,
                 total_rate_bps=0.0,
@@ -760,6 +771,9 @@ def _merge_rows(
 
     sample_window = float(max(sample_seconds, 1))
     for process in merged.values():
+        process.instant_download_rate_bps = process.download_bytes / sample_window
+        process.instant_upload_rate_bps = process.upload_bytes / sample_window
+        process.instant_total_rate_bps = process.total_bytes / sample_window
         process.download_rate_bps = process.download_bytes / sample_window
         process.upload_rate_bps = process.upload_bytes / sample_window
         process.total_rate_bps = process.total_bytes / sample_window

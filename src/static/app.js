@@ -135,7 +135,7 @@ function renderProcesses(processes) {
   if (!filtered.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 9;
+    cell.colSpan = 10;
     cell.textContent = query ? "Nothing matched the current filter." : "No process traffic found in the rolling average window.";
     row.append(cell);
     elements.processTable.append(row);
@@ -160,6 +160,7 @@ function renderProcesses(processes) {
     row.append(cell(formatBytes(process.download_bytes)));
     row.append(cell(formatBytes(process.upload_bytes)));
     row.append(cell(formatBytes(process.total_bytes)));
+    row.append(cell(formatRate(process.instant_total_rate_bps)));
     row.append(cell(formatRate(process.total_rate_bps)));
     row.append(cell(process.is_background ? "Background" : "Foreground"));
 

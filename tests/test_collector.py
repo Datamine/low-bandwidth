@@ -240,6 +240,7 @@ class CollectorParsingTests(unittest.TestCase):
         self.assertEqual(snapshot.processes[0].command, "/usr/bin/curl https://example.com")
         self.assertEqual(snapshot.processes[0].ports, ["58124->443/tcp"])
         self.assertEqual(snapshot.processes[0].download_bytes, 3072)
+        self.assertEqual(snapshot.processes[0].instant_total_rate_bps, 1792.0)
         self.assertEqual(snapshot.processes[0].total_rate_bps, 1792.0)
         self.assertEqual(mock_run.call_args_list[0].args[0], ["/usr/bin/nethogs", "-t", "-d", "2", "-c", "2"])
         self.assertEqual(collector.debug_payload()["debug"]["parsed_rows"], 2)
@@ -441,6 +442,7 @@ class CollectorParsingTests(unittest.TestCase):
         self.assertEqual(first.processes[0].total_bytes, 3584)
         self.assertEqual(second.processes[0].pid, 321)
         self.assertEqual(second.processes[0].total_bytes, 3584)
+        self.assertEqual(second.processes[0].instant_total_rate_bps, 0.0)
         self.assertAlmostEqual(second.processes[0].total_rate_bps, 112.0)
         self.assertEqual(third.processes, [])
 

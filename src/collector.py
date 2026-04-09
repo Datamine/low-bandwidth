@@ -63,7 +63,7 @@ class BandwidthCollector:
         self.last_debug: dict[str, Any] = {}
         self._rolling_samples: dict[tuple[int | None, str], deque[SamplePoint]] = {}
         self._rolling_processes: dict[tuple[int | None, str], ProcessUsage] = {}
-        self._macos_totals: dict[tuple[int | None, str], tuple[int, int]] = {}
+        self._macos_totals: dict[tuple[int | None, str], tuple[int, int, float]] = {}
 
     def snapshot(self) -> Snapshot:
         system = platform.system()
@@ -120,7 +120,8 @@ class BandwidthCollector:
         process_map = _read_process_map()
         port_map = _read_port_map("Darwin")
         processes = _merge_rows(parse_nettop_output(completed.stdout), process_map, port_map, self.sample_seconds, "Darwin")
-        processes = self._macos_sample_deltas(processes)
+        sample_time = time.time()
+        processes = self._macos_sample_deltas(processes, sample_time)
         notices = ["Live traffic is sampled in short bursts from macOS `nettop`."]
         return Snapshot(
             supported=True,
@@ -130,6 +131,7 @@ class BandwidthCollector:
             averaging_window_seconds=None,
             processes=processes,
             notices=notices,
+            collected_at=sample_time,
         )
 
     def _linux_snapshot(self) -> Snapshot:
@@ -297,22 +299,23 @@ class BandwidthCollector:
             self._rolling_samples.pop(key, None)
             self._rolling_processes.pop(key, None)
 
-    def _macos_sample_deltas(self, processes: list[ProcessUsage]) -> list[ProcessUsage]:
-        current_totals: dict[tuple[int | None, str], tuple[int, int]] = {}
+    def _macos_sample_deltas(self, processes: list[ProcessUsage], sample_time: float) -> list[ProcessUsage]:
+        current_totals: dict[tuple[int | None, str], tuple[int, int, float]] = {}
         sampled_processes: list[ProcessUsage] = []
 
         for process in processes:
             key = (process.pid, process.name)
-            current_totals[key] = (process.download_bytes, process.upload_bytes)
+            current_totals[key] = (process.download_bytes, process.upload_bytes, sample_time)
             previous_totals = self._macos_totals.get(key)
             if previous_totals is None:
                 download_bytes = 0
                 upload_bytes = 0
+                sample_window = float(max(self.sample_seconds, 1))
             else:
                 download_bytes = max(0, process.download_bytes - previous_totals[0])
                 upload_bytes = max(0, process.upload_bytes - previous_totals[1])
+                sample_window = max(sample_time - previous_totals[2], 0.001)
             total_bytes = download_bytes + upload_bytes
-            sample_window = float(max(self.sample_seconds, 1))
             sampled_processes.append(
                 ProcessUsage(
                     pid=process.pid,

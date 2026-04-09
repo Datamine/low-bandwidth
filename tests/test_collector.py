@@ -158,7 +158,7 @@ class CollectorParsingTests(unittest.TestCase):
         with (
             patch("src.collector.platform.system", return_value="Darwin"),
             patch("src.collector.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
-            patch("src.collector.time.time", side_effect=[100.0, 102.0]),
+            patch("src.collector.time.time", side_effect=[100.0, 100.0, 102.0, 102.0]),
             patch(
                 "src.collector.subprocess.run",
                 side_effect=[
@@ -177,6 +177,44 @@ class CollectorParsingTests(unittest.TestCase):
         self.assertEqual(second.processes[0].download_bytes, 2048)
         self.assertEqual(second.processes[0].upload_bytes, 1024)
         self.assertEqual(second.processes[0].total_bytes, 3072)
+
+    def test_macos_instant_rate_uses_actual_elapsed_time_between_samples(self) -> None:
+        collector = BandwidthCollector(sample_seconds=2)
+        first_nettop_output = "\n".join(
+            [
+                "process,bytes_in,bytes_out",
+                "mDNSResponder.449,1000000,500000",
+            ]
+        )
+        second_nettop_output = "\n".join(
+            [
+                "process,bytes_in,bytes_out",
+                "mDNSResponder.449,1051200,501024",
+            ]
+        )
+        ps_output = "449 /usr/sbin/mDNSResponder /usr/sbin/mDNSResponder"
+        with (
+            patch("src.collector.platform.system", return_value="Darwin"),
+            patch("src.collector.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
+            patch("src.collector.time.time", side_effect=[100.0, 100.0, 100.25, 100.25]),
+            patch(
+                "src.collector.subprocess.run",
+                side_effect=[
+                    subprocess.CompletedProcess(args=["nettop"], returncode=0, stdout=first_nettop_output, stderr=""),
+                    subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=ps_output, stderr=""),
+                    subprocess.CompletedProcess(args=["lsof"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["nettop"], returncode=0, stdout=second_nettop_output, stderr=""),
+                    subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=ps_output, stderr=""),
+                    subprocess.CompletedProcess(args=["lsof"], returncode=0, stdout="", stderr=""),
+                ],
+            ),
+        ):
+            collector.snapshot()
+            second = collector.snapshot()
+        self.assertEqual(second.processes[0].download_bytes, 51200)
+        self.assertEqual(second.processes[0].upload_bytes, 1024)
+        self.assertAlmostEqual(second.processes[0].instant_total_rate_bps, 208896.0)
+        self.assertLess(second.processes[0].total_rate_bps, second.processes[0].instant_total_rate_bps)
 
     def test_linux_snapshot_requires_nethogs(self) -> None:
         collector = BandwidthCollector(sample_seconds=2)
@@ -445,6 +483,41 @@ class CollectorParsingTests(unittest.TestCase):
         self.assertEqual(second.processes[0].instant_total_rate_bps, 0.0)
         self.assertAlmostEqual(second.processes[0].total_rate_bps, 112.0)
         self.assertEqual(third.processes, [])
+
+    def test_rolling_average_matches_instant_rate_for_steady_traffic(self) -> None:
+        collector = BandwidthCollector(sample_seconds=2)
+        steady_output = "\n".join(
+            [
+                "Refreshing:",
+                "curl/321/1000 0.250 1.500",
+            ]
+        )
+        ps_output = "321 /usr/bin/curl /usr/bin/curl https://example.com"
+        ss_output = 'tcp ESTAB 0 0 192.168.0.22:58124 91.189.91.81:443 users:(("curl",pid=321,fd=3))'
+        with (
+            patch("src.collector.platform.system", return_value="Linux"),
+            patch("src.collector.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
+            patch("src.collector.time.time", side_effect=[100.0, 102.0, 104.0]),
+            patch(
+                "src.collector.subprocess.run",
+                side_effect=[
+                    subprocess.CompletedProcess(args=["nethogs"], returncode=0, stdout="", stderr=steady_output),
+                    subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=ps_output, stderr=""),
+                    subprocess.CompletedProcess(args=["ss"], returncode=0, stdout=ss_output, stderr=""),
+                    subprocess.CompletedProcess(args=["nethogs"], returncode=0, stdout="", stderr=steady_output),
+                    subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=ps_output, stderr=""),
+                    subprocess.CompletedProcess(args=["ss"], returncode=0, stdout=ss_output, stderr=""),
+                    subprocess.CompletedProcess(args=["nethogs"], returncode=0, stdout="", stderr=steady_output),
+                    subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=ps_output, stderr=""),
+                    subprocess.CompletedProcess(args=["ss"], returncode=0, stdout=ss_output, stderr=""),
+                ],
+            ),
+        ):
+            collector.snapshot()
+            collector.snapshot()
+            third = collector.snapshot()
+        self.assertAlmostEqual(third.processes[0].instant_total_rate_bps, 1792.0)
+        self.assertAlmostEqual(third.processes[0].total_rate_bps, 1792.0)
 
     def test_other_platform_snapshot_returns_notice(self) -> None:
         collector = BandwidthCollector(sample_seconds=2)

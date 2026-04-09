@@ -46,7 +46,7 @@ If you want the terminal interface instead:
 python3 run.py --ui tui
 ```
 
-If you want to run the whole app under `sudo` without losing the terminal settings that curses needs:
+If you want to run the whole app under `sudo` without losing the terminal settings that curses needs, use the wrapper directly:
 
 ```bash
 ./scripts/run-with-sudo.sh --ui tui

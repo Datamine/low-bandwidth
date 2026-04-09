@@ -14,10 +14,15 @@ fi
 
 cd "${REPO_ROOT}"
 
+if [[ "${EUID}" -eq 0 ]]; then
+  exec env TERM="${TERM_VALUE}" \
+    "${PYTHON_BIN}" "${REPO_ROOT}/run.py" "$@"
+fi
+
 # Prompt before launching curses so sudo never interrupts the UI.
 sudo -v
 
 exec sudo \
-  --preserve-env=TERM,LANG,LC_ALL,LC_CTYPE,COLORTERM,TZ,TMUX,DISPLAY,XAUTHORITY \
+  --preserve-env=TERM,LANG,LC_ALL,LC_CTYPE,COLORTERM,TZ,TMUX,DISPLAY,XAUTHORITY,SUDO_UID,SUDO_GID,SUDO_USER \
   env TERM="${TERM_VALUE}" \
   "${PYTHON_BIN}" "${REPO_ROOT}/run.py" "$@"

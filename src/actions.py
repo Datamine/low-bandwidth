@@ -84,11 +84,12 @@ def _toggle_recipes() -> dict[str, ToggleRecipeConfig]:
                 "toggle-system-update-checks",
                 "Update check blocker",
                 "Toggles the background software update check scheduler.",
-                "Turns `softwareupdate --schedule` off when the blocker is enabled, and back on when disabled.",
-                "softwareupdate --schedule off|on",
+                "Turns `softwareupdate --schedule` off when the blocker is enabled, disables the background softwareupdated service, and restores both when disabled.",
+                "softwareupdate --schedule off|on && launchctl disable|enable system/com.apple.softwareupdated",
                 admin_required=True,
             ),
             process_names=("softwareupdated",),
+            launchd_services=(LaunchdService("system", "com.apple.softwareupdated"),),
             softwareupdate_schedule=True,
         ),
     }
@@ -191,9 +192,7 @@ class ActionController:
         if not self.supported:
             return ActionResult(ok=False, title="Unsupported platform", detail="Presets only work on macOS.")
         turning_on = not self.recipe_state(recipe_id)
-        if config.softwareupdate_schedule:
-            return self._toggle_softwareupdate_schedule(config, turning_on)
-        return self._toggle_launchd_blocker(config, turning_on)
+        return self._execute_toggle_recipe(config, turning_on)
 
     def _kill_named_processes(self, process_names: Iterable[str]) -> ActionResult:
         targets = [name.casefold() for name in process_names]
@@ -234,53 +233,110 @@ class ActionController:
             stderr=completed.stderr.strip() or None,
         )
 
-    def _toggle_launchd_blocker(self, config: ToggleRecipeConfig, turning_on: bool) -> ActionResult:
-        launchctl = self._command_path("launchctl")
-        commands: list[list[str]] = []
-        for service in config.launchd_services:
-            target = _launchctl_target(service)
-            commands.append([launchctl, "disable" if turning_on else "enable", target])
-            if turning_on:
-                commands.append([launchctl, "bootout", target])
+    def _execute_toggle_recipe(self, config: ToggleRecipeConfig, turning_on: bool) -> ActionResult:
         failures: list[str] = []
         executed: list[str] = []
-        for command in commands:
-            prepared_command = self._prepare_command(command, require_admin=config.recipe.admin_required)
-            completed = subprocess.run(  # noqa: S603
-                prepared_command,
-                capture_output=True,
-                check=False,
-                text=True,
-                timeout=20,
-            )
-            executed.append(_format_command(prepared_command))
-            if completed.returncode != 0:
-                detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
-                failures.append(f"{_format_command(prepared_command)} => {detail}")
+        details: list[str] = []
+
+        if config.softwareupdate_schedule:
+            schedule_result = self._toggle_softwareupdate_schedule(config, turning_on)
+            if schedule_result.command:
+                executed.append(schedule_result.command)
+            if schedule_result.ok:
+                details.append(schedule_result.detail)
+            else:
+                failures.append(schedule_result.detail)
+
+        if config.launchd_services:
+            launchd_result = self._toggle_launchd_blocker(config, turning_on)
+            if launchd_result.command:
+                executed.append(launchd_result.command)
+            if launchd_result.ok:
+                details.append(launchd_result.detail)
+            else:
+                failures.append(launchd_result.detail)
 
         stopped = self._kill_named_processes(config.process_names) if turning_on else None
-        if stopped is not None and not stopped.ok:
-            failures.append(stopped.detail)
+        if stopped is not None:
+            if stopped.ok:
+                details.append(stopped.detail)
+            else:
+                failures.append(stopped.detail)
+
+        verified_state = self.recipe_state(config.recipe.recipe_id)
+        if turning_on and not verified_state:
+            failures.append("The blocker commands ran, but launchd/softwareupdate did not verify as blocked.")
+        if not turning_on and verified_state:
+            failures.append("The unblock commands ran, but launchd/softwareupdate still reports the blocker as active.")
 
         title_prefix = "Enabled" if turning_on else "Disabled"
+        detail = " ".join(part for part in details if part).strip()
+        if not detail:
+            detail = "Restart blocking is active." if turning_on else "Restart blocking is inactive."
         if failures:
+            if detail:
+                detail = f"{detail} {' ; '.join(failures)}"
+            else:
+                detail = " ; ".join(failures)
             return ActionResult(
                 ok=False,
                 title=f"{title_prefix} {config.recipe.title}",
-                detail=" ; ".join(failures),
-                command=" && ".join(executed),
+                detail=detail,
+                command=" && ".join(executed) or None,
             )
 
-        detail = "Restart blocking is active."
-        if not turning_on:
-            detail = "Restart blocking is inactive."
-        if stopped is not None:
-            detail += f" {stopped.detail}"
         return ActionResult(
             ok=True,
             title=f"{title_prefix} {config.recipe.title}",
             detail=detail,
-            command=" && ".join(executed),
+            command=" && ".join(executed) or None,
+        )
+
+    def _toggle_launchd_blocker(self, config: ToggleRecipeConfig, turning_on: bool) -> ActionResult:
+        launchctl = self._command_path("launchctl")
+        executed: list[str] = []
+        failures: list[str] = []
+
+        for service in config.launchd_services:
+            candidates = _service_candidates(service)
+            candidate_succeeded = False
+            candidate_failures: list[str] = []
+            for candidate in candidates:
+                target = _launchctl_target(candidate)
+                commands = [[launchctl, "disable" if turning_on else "enable", target]]
+                if turning_on:
+                    commands.append([launchctl, "bootout", target])
+                current_executed: list[str] = []
+                current_failures: list[str] = []
+                for command in commands:
+                    prepared_command = self._prepare_command(command, require_admin=config.recipe.admin_required)
+                    completed = subprocess.run(  # noqa: S603
+                        prepared_command,
+                        capture_output=True,
+                        check=False,
+                        text=True,
+                        timeout=20,
+                    )
+                    current_executed.append(_format_command(prepared_command))
+                    if completed.returncode != 0:
+                        detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
+                        if turning_on and command[1] == "bootout" and _launchctl_absent_target(detail):
+                            continue
+                        current_failures.append(f"{_format_command(prepared_command)} => {detail}")
+                executed.extend(current_executed)
+                if not current_failures:
+                    candidate_succeeded = True
+                    break
+                candidate_failures.extend(current_failures)
+            if not candidate_succeeded:
+                failures.extend(candidate_failures)
+
+        detail = "Restart blocking is active." if turning_on else "Restart blocking is inactive."
+        return ActionResult(
+            ok=not failures,
+            title=config.recipe.title,
+            detail=detail if not failures else " ; ".join(failures),
+            command=" && ".join(executed) or None,
         )
 
     def _toggle_softwareupdate_schedule(self, config: ToggleRecipeConfig, turning_on: bool) -> ActionResult:
@@ -289,13 +345,6 @@ class ActionController:
         result = self._run_recipe_command(recipe, command, require_admin=recipe.admin_required)
         verb = "Enabled" if turning_on else "Disabled"
         result.title = f"{verb} {recipe.title}"
-        if turning_on and result.ok:
-            stopped = self._kill_named_processes(config.process_names)
-            if not stopped.ok:
-                result.ok = False
-                result.detail = f"{result.detail} {stopped.detail}"
-            elif stopped.detail:
-                result.detail = f"{result.detail} {stopped.detail}"
         return result
 
     def _command_path(self, command: str) -> str:
@@ -333,22 +382,25 @@ def _launchctl_service_disabled(
     sudo_command: str,
     use_sudo: bool,
 ) -> bool:
-    domain = service.domain_template.format(uid=_launchd_uid())
-    command = [launchctl, "print-disabled", domain]
-    if use_sudo and os.geteuid() != 0:
-        command = [sudo_command, "-n", *command]
-    completed = subprocess.run(  # noqa: S603
-        command,
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=20,
-    )
-    if completed.returncode != 0:
-        return False
-    lowered = completed.stdout.casefold()
-    label = service.label.casefold()
-    return f'"{label}" => true' in lowered or f"{label} => true" in lowered
+    for candidate in _service_candidates(service):
+        domain = candidate.domain_template.format(uid=_launchd_uid())
+        command = [launchctl, "print-disabled", domain]
+        if use_sudo and os.geteuid() != 0:
+            command = [sudo_command, "-n", *command]
+        completed = subprocess.run(  # noqa: S603
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=20,
+        )
+        if completed.returncode != 0:
+            continue
+        lowered = completed.stdout.casefold()
+        label = candidate.label.casefold()
+        if f'"{label}" => true' in lowered or f"{label} => true" in lowered:
+            return True
+    return False
 
 
 def _softwareupdate_schedule_disabled(softwareupdate: str, *, sudo_command: str, use_sudo: bool) -> bool:
@@ -370,6 +422,26 @@ def _softwareupdate_schedule_disabled(softwareupdate: str, *, sudo_command: str,
     if "automatic check is on" in lowered:
         return False
     return False
+
+
+def _service_candidates(service: LaunchdService) -> list[LaunchdService]:
+    if service.domain_template.startswith("gui/"):
+        return [service, LaunchdService(service.domain_template.replace("gui/", "user/", 1), service.label)]
+    return [service]
+
+
+def _launchctl_absent_target(detail: str) -> bool:
+    lowered = detail.casefold()
+    return any(
+        token in lowered
+        for token in (
+            "could not find service",
+            "service cannot load in requested session",
+            "no such process",
+            "not found",
+            "unknown service",
+        )
+    )
 
 
 def _wait_for_process_exit(pid: int, timeout_seconds: float = 1.0) -> bool:

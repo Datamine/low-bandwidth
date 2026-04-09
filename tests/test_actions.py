@@ -87,7 +87,7 @@ class ActionRulesTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, "", "")
 
         with (
-            patch.object(controller, "recipe_state", return_value=False),
+            patch.object(controller, "recipe_state", side_effect=[False, True]),
             patch("src.actions.os.getuid", return_value=501),
             patch.object(controller, "_command_path", side_effect=lambda command: f"/usr/bin/{command}"),
             patch("src.actions.subprocess.run", side_effect=fake_run),
@@ -115,7 +115,7 @@ class ActionRulesTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, "", "")
 
         with (
-            patch.object(controller, "recipe_state", return_value=False),
+            patch.object(controller, "recipe_state", side_effect=[False, True]),
             patch("src.actions.os.geteuid", return_value=501),
             patch.object(controller, "_command_path", side_effect=lambda command: f"/usr/bin/{command}"),
             patch("src.actions.subprocess.run", side_effect=fake_run),
@@ -126,7 +126,11 @@ class ActionRulesTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             commands_run,
-            [["/usr/bin/sudo", "-n", "/usr/bin/softwareupdate", "--schedule", "off"]],
+            [
+                ["/usr/bin/sudo", "-n", "/usr/bin/softwareupdate", "--schedule", "off"],
+                ["/usr/bin/sudo", "-n", "/usr/bin/launchctl", "disable", "system/com.apple.softwareupdated"],
+                ["/usr/bin/sudo", "-n", "/usr/bin/launchctl", "bootout", "system/com.apple.softwareupdated"],
+            ],
         )
 
     def test_recipe_state_admin_required_uses_sudo(self) -> None:
@@ -153,7 +157,7 @@ class ActionRulesTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, "", "")
 
         with (
-            patch.object(controller, "recipe_state", return_value=False),
+            patch.object(controller, "recipe_state", side_effect=[False, True]),
             patch("src.actions.os.geteuid", return_value=0),
             patch("src.actions.os.getuid", return_value=0),
             patch.dict("src.actions.os.environ", {"SUDO_UID": "501"}, clear=False),

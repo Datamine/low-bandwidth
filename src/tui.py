@@ -189,6 +189,7 @@ class TuiApp:
     _recipe_states: dict[str, bool] = field(default_factory=dict, init=False, repr=False)
     _killed_processes: set[tuple[int | None, str | None, str]] = field(default_factory=set, init=False, repr=False)
     _stopped_processes: set[tuple[int | None, str | None, str]] = field(default_factory=set, init=False, repr=False)
+    _preserve_status_on_refresh: bool = field(default=False, init=False, repr=False)
 
     def run(self, stdscr: curses.window) -> None:
         curses.curs_set(0)
@@ -235,7 +236,7 @@ class TuiApp:
         if recipe is not None:
             self._record_result(self.actions.execute_recipe(recipe.recipe_id))
             self._refresh_recipe_states()
-            self._request_snapshot_refresh("Refreshing snapshot…")
+            self._request_snapshot_refresh()
             return True
         return False
 
@@ -263,7 +264,7 @@ class TuiApp:
                 self._stopped_processes.discard(selected_identity)
             if action == "terminate" and result.ok and result.title == "Stopped":
                 self._stopped_processes.add(selected_identity)
-        self._request_snapshot_refresh("Refreshing snapshot…")
+        self._request_snapshot_refresh()
 
     def _apply_snapshot(self, snapshot: Snapshot) -> None:
         previous_identity = process_identity(self._selected_process())
@@ -288,6 +289,9 @@ class TuiApp:
             self.selected_index = matching_index
         if previous_identity is not None and self.selected_index is None and process_count > 0:
             self.status_message = "Selected process disappeared on refresh."
+            return
+        if self._preserve_status_on_refresh:
+            self._preserve_status_on_refresh = False
             return
         self.status_message = f"Updated {time.strftime('%H:%M:%S')}"
 
@@ -342,6 +346,7 @@ class TuiApp:
     def _record_result(self, result: ActionResult) -> None:
         self.history.appendleft(result)
         self.status_message = f"{result.title}: {result.detail}"
+        self._preserve_status_on_refresh = True
 
     def _selected_process(self) -> ProcessUsage | None:
         visible_processes = self._visible_processes()

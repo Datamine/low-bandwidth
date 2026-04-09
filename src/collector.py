@@ -26,6 +26,7 @@ _NETHOGS_ROW = re.compile(
 _NETHOGS_TRAILING_IDENTITY = re.compile(r"/(?P<pid>\d+)/(?:[^/\s]+)$")
 _NETHOGS_REFRESH = "Refreshing:"
 _SS_PID = re.compile(r"pid=(?P<pid>\d+)")
+_LSOF_IPV6 = re.compile(r"^\[(?P<host>.*)\]:(?P<port>[^:]+)$")
 
 
 class ProcessInfo(NamedTuple):
@@ -62,6 +63,7 @@ class BandwidthCollector:
         self.last_debug: dict[str, Any] = {}
         self._rolling_samples: dict[tuple[int | None, str], deque[SamplePoint]] = {}
         self._rolling_processes: dict[tuple[int | None, str], ProcessUsage] = {}
+        self._macos_totals: dict[tuple[int | None, str], tuple[int, int]] = {}
 
     def snapshot(self) -> Snapshot:
         system = platform.system()
@@ -118,6 +120,7 @@ class BandwidthCollector:
         process_map = _read_process_map()
         port_map = _read_port_map("Darwin")
         processes = _merge_rows(parse_nettop_output(completed.stdout), process_map, port_map, self.sample_seconds, "Darwin")
+        processes = self._macos_sample_deltas(processes)
         notices = ["Live traffic is sampled in short bursts from macOS `nettop`."]
         return Snapshot(
             supported=True,
@@ -275,6 +278,7 @@ class BandwidthCollector:
     def _clear_rolling_average(self) -> None:
         self._rolling_samples.clear()
         self._rolling_processes.clear()
+        self._macos_totals.clear()
 
     def _prune_rolling_average(self, now: float) -> None:
         cutoff = now - ROLLING_AVERAGE_WINDOW_SECONDS
@@ -287,6 +291,45 @@ class BandwidthCollector:
         for key in empty_keys:
             self._rolling_samples.pop(key, None)
             self._rolling_processes.pop(key, None)
+
+    def _macos_sample_deltas(self, processes: list[ProcessUsage]) -> list[ProcessUsage]:
+        current_totals: dict[tuple[int | None, str], tuple[int, int]] = {}
+        sampled_processes: list[ProcessUsage] = []
+
+        for process in processes:
+            key = (process.pid, process.name)
+            current_totals[key] = (process.download_bytes, process.upload_bytes)
+            previous_totals = self._macos_totals.get(key)
+            if previous_totals is None:
+                download_bytes = 0
+                upload_bytes = 0
+            else:
+                download_bytes = max(0, process.download_bytes - previous_totals[0])
+                upload_bytes = max(0, process.upload_bytes - previous_totals[1])
+            total_bytes = download_bytes + upload_bytes
+            sample_window = float(max(self.sample_seconds, 1))
+            sampled_processes.append(
+                ProcessUsage(
+                    pid=process.pid,
+                    name=process.name,
+                    display_name=process.display_name,
+                    command=process.command,
+                    executable=process.executable,
+                    bundle_name=process.bundle_name,
+                    ports=process.ports.copy(),
+                    download_bytes=download_bytes,
+                    upload_bytes=upload_bytes,
+                    total_bytes=total_bytes,
+                    download_rate_bps=download_bytes / sample_window,
+                    upload_rate_bps=upload_bytes / sample_window,
+                    total_rate_bps=total_bytes / sample_window,
+                    is_background=process.is_background,
+                    recipe_ids=process.recipe_ids.copy(),
+                )
+            )
+
+        self._macos_totals = current_totals
+        return sorted(sampled_processes, key=lambda process: process.total_bytes, reverse=True)
 
 
 def _effective_window_seconds(samples: deque[SamplePoint], now: float, sample_seconds: int) -> float:
@@ -531,9 +574,25 @@ def _program_name(command: str) -> str:
 
 
 def _read_port_map(system_name: str) -> dict[int, list[str]]:
+    if system_name == "Darwin":
+        return _read_macos_port_map()
     if system_name == "Linux":
         return _read_linux_port_map()
     return {}
+
+
+def _read_macos_port_map() -> dict[int, list[str]]:
+    command = [shutil.which("lsof") or "lsof", "-nP", "-i", "-F", "pPn"]
+    completed = subprocess.run(  # noqa: S603
+        command,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=10,
+    )
+    if completed.returncode != 0:
+        return {}
+    return parse_lsof_output(completed.stdout)
 
 
 def _read_linux_port_map() -> dict[int, list[str]]:
@@ -575,6 +634,36 @@ def parse_ss_output(output: str) -> dict[int, list[str]]:
     return port_map
 
 
+def parse_lsof_output(output: str) -> dict[int, list[str]]:
+    port_map: dict[int, list[str]] = {}
+    current_pid: int | None = None
+    current_protocol: str | None = None
+
+    for line in output.splitlines():
+        if not line:
+            continue
+        field = line[0]
+        value = line[1:].strip()
+        if field == "p":
+            current_pid = int(value) if value.isdigit() else None
+            current_protocol = None
+            continue
+        if field == "P":
+            current_protocol = value.casefold() if value else None
+            continue
+        if field != "n" or current_pid is None:
+            continue
+
+        description = _lsof_port_description(current_protocol, value)
+        if description is None:
+            continue
+        existing = port_map.setdefault(current_pid, [])
+        if description not in existing:
+            existing.append(description)
+
+    return port_map
+
+
 def _endpoint_port(endpoint: str) -> str | None:
     candidate = endpoint.strip()
     if not candidate:
@@ -584,6 +673,36 @@ def _endpoint_port(endpoint: str) -> str | None:
     if ":" not in candidate:
         return candidate
     return candidate.rsplit(":", maxsplit=1)[-1]
+
+
+def _lsof_endpoint_port(endpoint: str) -> str | None:
+    candidate = endpoint.strip()
+    if not candidate:
+        return None
+    if " (" in candidate:
+        candidate = candidate.split(" (", maxsplit=1)[0]
+    ipv6_match = _LSOF_IPV6.match(candidate)
+    if ipv6_match is not None:
+        return ipv6_match.group("port")
+    return _endpoint_port(candidate)
+
+
+def _lsof_port_description(protocol: str | None, name: str) -> str | None:
+    if protocol is None:
+        return None
+    cleaned = name.strip()
+    if not cleaned or cleaned.startswith("->"):
+        return None
+    local_endpoint, separator, peer_endpoint = cleaned.partition("->")
+    local_port = _lsof_endpoint_port(local_endpoint)
+    if local_port is None or local_port == "*":
+        return None
+    if not separator:
+        return f"{local_port}/{protocol}"
+    peer_port = _lsof_endpoint_port(peer_endpoint)
+    if peer_port is None or peer_port == "*":
+        return f"{local_port}/{protocol}"
+    return f"{local_port}->{peer_port}/{protocol}"
 
 
 def _port_description(protocol: str, local_port: str, peer_port: str | None) -> str | None:

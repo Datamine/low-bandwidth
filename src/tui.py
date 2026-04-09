@@ -14,12 +14,12 @@ from .collector import BandwidthCollector
 from .models import ActionResult, ProcessUsage, Recipe, Snapshot
 
 AUTO_REFRESH_DELAY_SECONDS = 0.25
+HIDE_SMALL_PROCESS_THRESHOLD_BYTES = 1024
 TABLE_BYTES_WIDTH = 8
-TABLE_TYPE_WIDTH = 4
 TABLE_PREFERRED_PROCESS_WIDTH = 18
 TABLE_PREFERRED_PORTS_WIDTH = 18
 TABLE_MIN_FLEX_WIDTH = 8
-TABLE_COLUMN_GAP_COUNT = 7
+TABLE_COLUMN_GAP_COUNT = 6
 
 
 def run_tui(collector: BandwidthCollector, actions: ActionController) -> None:
@@ -76,7 +76,6 @@ class TableLayout:
     process_width: int
     ports_width: int
     bytes_width: int
-    type_width: int
 
 
 def table_layout(processes: list[ProcessUsage], available_width: int | None = None) -> TableLayout:
@@ -86,7 +85,6 @@ def table_layout(processes: list[ProcessUsage], available_width: int | None = No
         process_width=TABLE_PREFERRED_PROCESS_WIDTH,
         ports_width=TABLE_PREFERRED_PORTS_WIDTH,
         bytes_width=TABLE_BYTES_WIDTH,
-        type_width=TABLE_TYPE_WIDTH,
     )
     if available_width is None:
         return layout
@@ -94,7 +92,6 @@ def table_layout(processes: list[ProcessUsage], available_width: int | None = No
     fixed_width = (
         layout.pid_width
         + (layout.bytes_width * 4)
-        + layout.type_width
         + TABLE_COLUMN_GAP_COUNT
     )
     available_flex_width = max(TABLE_MIN_FLEX_WIDTH * 2, available_width - fixed_width)
@@ -109,7 +106,6 @@ def table_layout(processes: list[ProcessUsage], available_width: int | None = No
         process_width=process_width,
         ports_width=ports_width,
         bytes_width=layout.bytes_width,
-        type_width=layout.type_width,
     )
 
 
@@ -122,8 +118,7 @@ def process_row_text(index: int, process: ProcessUsage, layout: TableLayout) -> 
         f"{format_bytes(process.download_bytes):>{layout.bytes_width}} "
         f"{format_bytes(process.upload_bytes):>{layout.bytes_width}} "
         f"{format_bytes(process.total_bytes):>{layout.bytes_width}} "
-        f"{format_bytes(process.total_rate_bps):>{layout.bytes_width}} "
-        f"{'bg' if process.is_background else 'fg':<{layout.type_width}}"
+        f"{format_bytes(process.total_rate_bps):>{layout.bytes_width}}"
     )
 
 
@@ -132,8 +127,7 @@ def header_row_text(layout: TableLayout) -> str:
         f"{'PID':>{layout.pid_width}} "
         f"{'Process':<{layout.process_width}} {'Ports':<{layout.ports_width}} "
         f"{'Down':>{layout.bytes_width}} {'Up':>{layout.bytes_width}} "
-        f"{'Total':>{layout.bytes_width}} {'Rate':>{layout.bytes_width}} "
-        f"{'Type':<{layout.type_width}}"
+        f"{'Total':>{layout.bytes_width}} {'Rate':>{layout.bytes_width}}"
     )
 
 
@@ -159,6 +153,7 @@ class TuiApp:
     actions: ActionController
     history: deque[ActionResult] = field(default_factory=lambda: deque(maxlen=8))
     selected_index: int | None = None
+    hide_small_processes: bool = True
     snapshot: Snapshot | None = None
     status_message: str = "Loading…"
     _colors: dict[str, int] = field(default_factory=dict, init=False, repr=False)
@@ -201,6 +196,9 @@ class TuiApp:
         if key in (ord("r"), ord("R")):
             self._request_snapshot_refresh("Refreshing snapshot…")
             return True
+        if key in (ord("h"), ord("H")):
+            self._toggle_hide_small_processes()
+            return True
         if key in (ord("t"), ord("T")):
             self._act_on_selected_process("terminate")
             return True
@@ -216,7 +214,7 @@ class TuiApp:
         return False
 
     def _move_selection(self, delta: int) -> None:
-        process_count = len(self.snapshot.processes) if self.snapshot is not None else 0
+        process_count = len(self._visible_processes())
         if process_count == 0:
             self.selected_index = None
             return
@@ -236,7 +234,8 @@ class TuiApp:
     def _apply_snapshot(self, snapshot: Snapshot) -> None:
         previous_identity = process_identity(self._selected_process())
         self.snapshot = snapshot
-        process_count = len(self.snapshot.processes)
+        visible_processes = self._visible_processes()
+        process_count = len(visible_processes)
         if process_count == 0:
             self.selected_index = None
         elif previous_identity is None:
@@ -246,7 +245,7 @@ class TuiApp:
                 self.selected_index = min(self.selected_index, process_count - 1)
         else:
             matching_index = next(
-                (index for index, process in enumerate(self.snapshot.processes) if process_identity(process) == previous_identity),
+                (index for index, process in enumerate(visible_processes) if process_identity(process) == previous_identity),
                 None,
             )
             self.selected_index = matching_index
@@ -305,9 +304,45 @@ class TuiApp:
         self.status_message = f"{result.title}: {result.detail}"
 
     def _selected_process(self) -> ProcessUsage | None:
-        if self.snapshot is None or not self.snapshot.processes or self.selected_index is None:
+        visible_processes = self._visible_processes()
+        if not visible_processes or self.selected_index is None:
             return None
-        return self.snapshot.processes[self.selected_index]
+        return visible_processes[self.selected_index]
+
+    def _visible_processes(self) -> list[ProcessUsage]:
+        if self.snapshot is None:
+            return []
+        if not self.hide_small_processes:
+            return self.snapshot.processes
+        return [
+            process
+            for process in self.snapshot.processes
+            if process.total_bytes >= HIDE_SMALL_PROCESS_THRESHOLD_BYTES
+        ]
+
+    def _toggle_hide_small_processes(self) -> None:
+        previous_identity = process_identity(self._selected_process())
+        self.hide_small_processes = not self.hide_small_processes
+        visible_processes = self._visible_processes()
+        if not visible_processes:
+            self.selected_index = None
+        elif previous_identity is None:
+            self.selected_index = min(self.selected_index or 0, len(visible_processes) - 1)
+        else:
+            self.selected_index = next(
+                (index for index, process in enumerate(visible_processes) if process_identity(process) == previous_identity),
+                None,
+            )
+
+        if self.hide_small_processes:
+            if previous_identity is not None and self.selected_index is None:
+                self.status_message = "Small-process filter enabled. Current selection is hidden."
+            else:
+                self.status_message = "Small-process filter enabled. Hiding rows below 1KB total."
+            return
+        if self.selected_index is None and visible_processes:
+            self.selected_index = 0
+        self.status_message = "Small-process filter disabled. Showing all rows."
 
     def _draw(self, stdscr: curses.window) -> None:
         stdscr.erase()
@@ -332,7 +367,7 @@ class TuiApp:
         )
         summary = (
             f"collector={snapshot.collector} {window_summary} "
-            f"processes={len(snapshot.processes)} q=quit r=refresh t=stop x=kill"
+            f"processes={len(self._visible_processes())}/{len(snapshot.processes)} q=quit r=refresh h=filter t=stop x=kill"
         )
         self._write(stdscr, row, 0, summary, width, self._attr("muted"))
         row += 1
@@ -348,7 +383,8 @@ class TuiApp:
         else:
             row += 1
 
-        layout = table_layout(snapshot.processes, width)
+        visible_processes = self._visible_processes()
+        layout = table_layout(visible_processes, width)
         header = header_row_text(layout)
         self._write(stdscr, row, 0, header, width, curses.A_BOLD)
 
@@ -358,16 +394,16 @@ class TuiApp:
         visible_rows = max(1, detail_top - table_top - 1)
         start_index = self._table_start(visible_rows)
 
-        if not snapshot.processes:
+        if not visible_processes:
             self._write(
                 stdscr,
                 table_top,
                 0,
-                "No process traffic found in the rolling average window.",
+                "No visible process traffic found in the rolling average window.",
                 width,
             )
         else:
-            for row_offset, process in enumerate(snapshot.processes[start_index : start_index + visible_rows]):
+            for row_offset, process in enumerate(visible_processes[start_index : start_index + visible_rows]):
                 row = table_top + row_offset
                 index = start_index + row_offset
                 row_text = process_row_text(index, process, layout)
@@ -410,7 +446,7 @@ class TuiApp:
         self._write(stdscr, next_row + 2, 0, history_line, width, self._attr("muted"))
 
     def _table_start(self, visible_rows: int) -> int:
-        process_count = len(self.snapshot.processes) if self.snapshot is not None else 0
+        process_count = len(self._visible_processes())
         if process_count <= visible_rows:
             return 0
         if self.selected_index is None:

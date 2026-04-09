@@ -4,7 +4,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from src.collector import BandwidthCollector, parse_nethogs_output, parse_nettop_output, parse_ss_output
+from src.collector import BandwidthCollector, parse_lsof_output, parse_nethogs_output, parse_nettop_output, parse_ss_output
 
 
 class CollectorParsingTests(unittest.TestCase):
@@ -75,6 +75,108 @@ class CollectorParsingTests(unittest.TestCase):
         port_map = parse_ss_output(raw)
         self.assertEqual(port_map[321], ["58124->443/tcp"])
         self.assertEqual(port_map[88], ["53/udp"])
+
+    def test_parse_lsof_output_tracks_ports_by_pid(self) -> None:
+        raw = "\n".join(
+            [
+                "p321",
+                "Ptcp",
+                "n192.168.0.22:58124->91.189.91.81:443",
+                "p88",
+                "Pudp",
+                "n*:53",
+            ]
+        )
+        port_map = parse_lsof_output(raw)
+        self.assertEqual(port_map[321], ["58124->443/tcp"])
+        self.assertEqual(port_map[88], ["53/udp"])
+
+    def test_macos_snapshot_uses_lsof_ports(self) -> None:
+        collector = BandwidthCollector(sample_seconds=2)
+        nettop_output = "\n".join(
+            [
+                "process,bytes_in,bytes_out",
+                "curl.321,2048,1024",
+            ]
+        )
+        ps_output = "321 /usr/bin/curl /usr/bin/curl https://example.com"
+        lsof_output = "\n".join(
+            [
+                "p321",
+                "Ptcp",
+                "n192.168.0.22:58124->91.189.91.81:443",
+            ]
+        )
+        with (
+            patch("src.collector.platform.system", return_value="Darwin"),
+            patch("src.collector.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
+            patch(
+                "src.collector.subprocess.run",
+                side_effect=[
+                    subprocess.CompletedProcess(
+                        args=["nettop"],
+                        returncode=0,
+                        stdout=nettop_output,
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(
+                        args=["ps"],
+                        returncode=0,
+                        stdout=ps_output,
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(
+                        args=["lsof"],
+                        returncode=0,
+                        stdout=lsof_output,
+                        stderr="",
+                    ),
+                ],
+            ),
+        ):
+            snapshot = collector.snapshot()
+        self.assertTrue(snapshot.supported)
+        self.assertEqual(snapshot.collector, "nettop")
+        self.assertEqual(snapshot.processes[0].pid, 321)
+        self.assertEqual(snapshot.processes[0].ports, ["58124->443/tcp"])
+
+    def test_macos_snapshot_uses_deltas_not_cumulative_totals(self) -> None:
+        collector = BandwidthCollector(sample_seconds=2)
+        first_nettop_output = "\n".join(
+            [
+                "process,bytes_in,bytes_out",
+                "mDNSResponder.449,1000000,500000",
+            ]
+        )
+        second_nettop_output = "\n".join(
+            [
+                "process,bytes_in,bytes_out",
+                "mDNSResponder.449,1002048,501024",
+            ]
+        )
+        ps_output = "449 /usr/sbin/mDNSResponder /usr/sbin/mDNSResponder"
+        with (
+            patch("src.collector.platform.system", return_value="Darwin"),
+            patch("src.collector.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
+            patch("src.collector.time.time", side_effect=[100.0, 102.0]),
+            patch(
+                "src.collector.subprocess.run",
+                side_effect=[
+                    subprocess.CompletedProcess(args=["nettop"], returncode=0, stdout=first_nettop_output, stderr=""),
+                    subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=ps_output, stderr=""),
+                    subprocess.CompletedProcess(args=["lsof"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["nettop"], returncode=0, stdout=second_nettop_output, stderr=""),
+                    subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=ps_output, stderr=""),
+                    subprocess.CompletedProcess(args=["lsof"], returncode=0, stdout="", stderr=""),
+                ],
+            ),
+        ):
+            first = collector.snapshot()
+            second = collector.snapshot()
+        self.assertEqual(first.processes[0].total_bytes, 0)
+        self.assertEqual(second.processes[0].download_bytes, 2048)
+        self.assertEqual(second.processes[0].upload_bytes, 1024)
+        self.assertEqual(second.processes[0].total_bytes, 3072)
 
     def test_linux_snapshot_requires_nethogs(self) -> None:
         collector = BandwidthCollector(sample_seconds=2)

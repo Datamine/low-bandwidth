@@ -111,8 +111,57 @@ class TuiHelpersTests(unittest.TestCase):
         process = self._process(42, "curl")
         self.assertEqual(process_identity(process), (42, "/usr/bin/curl", "curl"))
 
+    def test_toggle_hide_small_processes_hides_rows_below_1kb(self) -> None:
+        app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))
+        small = self._process(100, "small")
+        small.total_bytes = 512
+        big = self._process(200, "big")
+        big.total_bytes = 2048
+        app.snapshot = Snapshot(
+            supported=True,
+            platform="Linux",
+            collector="nethogs",
+            sample_seconds=2,
+            averaging_window_seconds=60,
+            processes=[small, big],
+            notices=[],
+        )
+        app.selected_index = 1
+
+        app.hide_small_processes = False
+        app._toggle_hide_small_processes()
+
+        self.assertTrue(app.hide_small_processes)
+        self.assertEqual([process.pid for process in app._visible_processes()], [200])
+        self.assertEqual(app.selected_index, 0)
+        self.assertEqual(app._selected_process().pid, 200)
+
+    def test_toggle_hide_small_processes_clears_selection_if_current_row_is_hidden(self) -> None:
+        app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))
+        small = self._process(100, "small")
+        small.total_bytes = 512
+        big = self._process(200, "big")
+        big.total_bytes = 2048
+        app.snapshot = Snapshot(
+            supported=True,
+            platform="Linux",
+            collector="nethogs",
+            sample_seconds=2,
+            averaging_window_seconds=60,
+            processes=[small, big],
+            notices=[],
+        )
+        app.selected_index = 0
+
+        app.hide_small_processes = False
+        app._toggle_hide_small_processes()
+
+        self.assertIsNone(app.selected_index)
+        self.assertEqual(app.status_message, "Small-process filter enabled. Current selection is hidden.")
+
     def test_apply_snapshot_preserves_selected_process_across_reorder(self) -> None:
         app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))
+        app.hide_small_processes = False
         first = self._process(100, "first")
         second = self._process(200, "second")
         app.snapshot = Snapshot(
@@ -142,6 +191,7 @@ class TuiHelpersTests(unittest.TestCase):
 
     def test_apply_snapshot_clears_selection_if_selected_process_disappears(self) -> None:
         app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))
+        app.hide_small_processes = False
         first = self._process(100, "first")
         second = self._process(200, "second")
         app.snapshot = Snapshot(

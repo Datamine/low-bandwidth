@@ -315,8 +315,15 @@ class ActionController:
         return None
 
 
+def _launchd_uid() -> int:
+    sudo_uid = os.environ.get("SUDO_UID")
+    if os.geteuid() == 0 and sudo_uid and sudo_uid.isdigit():
+        return int(sudo_uid)
+    return os.getuid()
+
+
 def _launchctl_target(service: LaunchdService) -> str:
-    return f"{service.domain_template.format(uid=os.getuid())}/{service.label}"
+    return f"{service.domain_template.format(uid=_launchd_uid())}/{service.label}"
 
 
 def _launchctl_service_disabled(
@@ -326,7 +333,7 @@ def _launchctl_service_disabled(
     sudo_command: str,
     use_sudo: bool,
 ) -> bool:
-    domain = service.domain_template.format(uid=os.getuid())
+    domain = service.domain_template.format(uid=_launchd_uid())
     command = [launchctl, "print-disabled", domain]
     if use_sudo and os.geteuid() != 0:
         command = [sudo_command, "-n", *command]

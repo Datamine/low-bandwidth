@@ -143,3 +143,33 @@ class ActionRulesTests(unittest.TestCase):
             sudo_command="/usr/bin/sudo",
             use_sudo=True,
         )
+
+    def test_execute_recipe_as_root_targets_original_user_launchd_domain(self) -> None:
+        controller = ActionController(system_name="Darwin")
+        commands_run: list[list[str]] = []
+
+        def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            commands_run.append(command)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with (
+            patch.object(controller, "recipe_state", return_value=False),
+            patch("src.actions.os.geteuid", return_value=0),
+            patch("src.actions.os.getuid", return_value=0),
+            patch.dict("src.actions.os.environ", {"SUDO_UID": "501"}, clear=False),
+            patch.object(controller, "_command_path", side_effect=lambda command: f"/usr/bin/{command}"),
+            patch("src.actions.subprocess.run", side_effect=fake_run),
+            patch.object(controller, "_kill_named_processes", return_value=type("Result", (), {"ok": True, "detail": "Stopped 0 process(es)."})()),
+        ):
+            result = controller.execute_recipe("toggle-icloud-sync")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            commands_run,
+            [
+                ["/usr/bin/launchctl", "disable", "gui/501/com.apple.bird"],
+                ["/usr/bin/launchctl", "bootout", "gui/501/com.apple.bird"],
+                ["/usr/bin/launchctl", "disable", "gui/501/com.apple.cloudd"],
+                ["/usr/bin/launchctl", "bootout", "gui/501/com.apple.cloudd"],
+            ],
+        )

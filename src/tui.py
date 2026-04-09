@@ -147,6 +147,13 @@ def process_identity(process: ProcessUsage | None) -> tuple[int | None, str | No
     return (process.pid, process.command, process.name)
 
 
+def total_rate_text(processes: list[ProcessUsage]) -> str:
+    upload_rate = sum(process.upload_rate_bps for process in processes)
+    download_rate = sum(process.download_rate_bps for process in processes)
+    total_rate = upload_rate + download_rate
+    return f"Total Rate: {format_bytes(total_rate)} ({format_bytes(upload_rate)} Up / {format_bytes(download_rate)} Down)"
+
+
 @dataclass(slots=True)
 class TuiApp:
     collector: BandwidthCollector
@@ -423,7 +430,14 @@ class TuiApp:
     ) -> None:
         if selected is None:
             self._write(stdscr, top, 0, "Selected: none", width, curses.A_BOLD)
-            self._write(stdscr, top + 1, 0, self.status_message, width, self._attr("muted"))
+            self._write(
+                stdscr,
+                top + 1,
+                0,
+                f"Status: {self.status_message} | {total_rate_text(self._visible_processes())}",
+                width,
+                self._attr("muted"),
+            )
             return
 
         selected_lines = wrapped_lines(selected_summary_text(selected), width)
@@ -433,7 +447,14 @@ class TuiApp:
         next_row = top + len(selected_lines)
         self._write(stdscr, next_row, 0, f"Ports: {format_ports(selected.ports)}", width, self._attr("muted") | curses.A_BOLD)
 
-        self._write(stdscr, next_row + 1, 0, f"Status: {self.status_message}", width, self._status_attr())
+        self._write(
+            stdscr,
+            next_row + 1,
+            0,
+            f"Status: {self.status_message} | {total_rate_text(self._visible_processes())}",
+            width,
+            self._status_attr(),
+        )
 
         history_line = "Recent: "
         if self.history:

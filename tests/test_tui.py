@@ -7,6 +7,7 @@ from src.collector import BandwidthCollector
 from src.models import ProcessUsage, Snapshot
 from src.tui import (
     detail_block_height,
+    total_rate_text,
     process_identity,
     TuiApp,
     format_bytes,
@@ -110,6 +111,15 @@ class TuiHelpersTests(unittest.TestCase):
     def test_process_identity_uses_pid_command_and_name(self) -> None:
         process = self._process(42, "curl")
         self.assertEqual(process_identity(process), (42, "/usr/bin/curl", "curl"))
+
+    def test_total_rate_text_summarizes_visible_rates(self) -> None:
+        first = self._process(100, "first")
+        first.upload_rate_bps = 100
+        first.download_rate_bps = 23
+        second = self._process(200, "second")
+        second.upload_rate_bps = 924
+        second.download_rate_bps = 1001
+        self.assertEqual(total_rate_text([first, second]), "Total Rate: 2.0K (1.0K Up / 1.0K Down)")
 
     def test_toggle_hide_small_processes_hides_rows_below_1kb(self) -> None:
         app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))

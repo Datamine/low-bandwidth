@@ -69,8 +69,8 @@ low-bandwidth --ui tui
 - `j` / `k` or arrow keys: move through processes
 - `t`: send `SIGTERM` to the selected process
 - `x`: send `SIGKILL` to the selected process
-- `a` through `f`: run one of the global presets shown in the TUI header
-- `r`: refresh immediately
+- `a` through `c`: toggle one of the macOS restart blockers shown in the TUI header
+- `h`: toggle hiding rows below `1KB` total traffic
 - `q`: quit
 
 ## Notes
@@ -81,5 +81,5 @@ low-bandwidth --ui tui
 - Built-in presets are platform-specific. Linux intentionally hides the macOS-only iCloud/App Store actions instead of showing irrelevant controls.
 - On Linux, the app will retry `nethogs` with `sudo -n` after a permission error. Run `sudo -v` first if you want that non-interactive retry to succeed.
 - If you prefer to manage dependencies separately, `uv sync` still only handles the Python environment. Use `./scripts/install-linux-deps.sh` to install `nethogs` on Linux.
-- Some preset actions are temporary by design because Apple does not expose a stable supported command-line toggle for every sync feature.
+- The macOS blocker presets now try to disable the relevant `launchd` services before stopping matching processes, so they are meant to survive immediate restarts better than a plain kill.
 - `softwareupdate --schedule on|off` may prompt for admin rights depending on how you launch the app.

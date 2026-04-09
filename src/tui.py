@@ -31,15 +31,21 @@ def recipe_shortcuts(recipes: list[Recipe]) -> dict[str, Recipe]:
     return {key: recipe for key, recipe in zip(keys, recipes, strict=False)}
 
 
-def commands_line_text(shortcuts: dict[str, Recipe]) -> str:
+def _toggle_marker(is_on: bool) -> str:
+    return "[on]" if is_on else "[off]"
+
+
+def commands_line_text(shortcuts: dict[str, Recipe], recipe_states: dict[str, bool], hide_small_processes: bool) -> str:
     commands = [
         "q quit",
-        "r refresh",
-        "h hide<1KB",
+        f"h {_toggle_marker(hide_small_processes)} hide<1KB",
         "t stop",
         "x kill",
     ]
-    commands.extend(f"{key} {truncate(recipe.title, 22)}" for key, recipe in shortcuts.items())
+    commands.extend(
+        f"{key} {_toggle_marker(recipe_states.get(recipe.recipe_id, False))} {truncate(recipe.title, 22)}"
+        for key, recipe in shortcuts.items()
+    )
     return "Commands: " + " | ".join(commands)
 
 
@@ -114,8 +120,8 @@ def table_layout(processes: list[ProcessUsage], available_width: int | None = No
     )
 
 
-def process_row_text(index: int, process: ProcessUsage, layout: TableLayout) -> str:
-    name = truncate(process.display_name, layout.process_width)
+def process_row_text(index: int, process: ProcessUsage, layout: TableLayout, display_name: str | None = None) -> str:
+    name = truncate(display_name or process.display_name, layout.process_width)
     ports = truncate(format_ports(process.ports), layout.ports_width)
     return (
         f"{str(process.pid or '-'):>{layout.pid_width}} "
@@ -174,12 +180,15 @@ class TuiApp:
     _refresh_requested: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _shutdown_requested: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _collector_thread: threading.Thread | None = field(default=None, init=False, repr=False)
+    _recipe_states: dict[str, bool] = field(default_factory=dict, init=False, repr=False)
+    _killed_processes: set[tuple[int | None, str | None, str]] = field(default_factory=set, init=False, repr=False)
 
     def run(self, stdscr: curses.window) -> None:
         curses.curs_set(0)
         stdscr.nodelay(False)
         stdscr.timeout(200)
         self._init_colors()
+        self._refresh_recipe_states()
         self.status_message = "Collecting snapshot…"
         self._start_collector_thread()
         self._request_snapshot_refresh("Collecting snapshot…")
@@ -205,9 +214,6 @@ class TuiApp:
         if key in (curses.KEY_UP, ord("k"), ord("K")):
             self._move_selection(-1)
             return True
-        if key in (ord("r"), ord("R")):
-            self._request_snapshot_refresh("Refreshing snapshot…")
-            return True
         if key in (ord("h"), ord("H")):
             self._toggle_hide_small_processes()
             return True
@@ -221,6 +227,7 @@ class TuiApp:
         recipe = recipe_shortcuts(self.actions.list_recipes()).get(chr(key).lower()) if 0 <= key < 256 else None
         if recipe is not None:
             self._record_result(self.actions.execute_recipe(recipe.recipe_id))
+            self._refresh_recipe_states()
             self._request_snapshot_refresh("Refreshing snapshot…")
             return True
         return False
@@ -240,12 +247,17 @@ class TuiApp:
         if process is None or process.pid is None:
             self.status_message = "No selectable PID on the current row."
             return
+        selected_identity = process_identity(process)
         self._record_result(self.actions.execute_process_action(process.pid, action))
+        if action == "kill" and selected_identity is not None:
+            self._killed_processes.add(selected_identity)
         self._request_snapshot_refresh("Refreshing snapshot…")
 
     def _apply_snapshot(self, snapshot: Snapshot) -> None:
         previous_identity = process_identity(self._selected_process())
         self.snapshot = snapshot
+        current_identities = {process_identity(process) for process in snapshot.processes}
+        self._killed_processes.intersection_update(identity for identity in current_identities if identity is not None)
         visible_processes = self._visible_processes()
         process_count = len(visible_processes)
         if process_count == 0:
@@ -270,6 +282,9 @@ class TuiApp:
         if message is not None:
             self.status_message = message
         self._refresh_requested.set()
+
+    def _refresh_recipe_states(self) -> None:
+        self._recipe_states = self.actions.recipe_states()
 
     def _start_collector_thread(self) -> None:
         if self._collector_thread is not None:
@@ -356,6 +371,11 @@ class TuiApp:
             self.selected_index = 0
         self.status_message = "Small-process filter disabled. Showing all rows."
 
+    def _display_name(self, process: ProcessUsage) -> str:
+        if process_identity(process) in self._killed_processes:
+            return f"[killed] {process.display_name}"
+        return process.display_name
+
     def _draw(self, stdscr: curses.window) -> None:
         stdscr.erase()
         height, width = stdscr.getmaxyx()
@@ -385,7 +405,7 @@ class TuiApp:
             self._write(stdscr, row, 0, line, width, self._attr("muted"))
             row += 1
 
-        for line in wrapped_lines(commands_line_text(shortcuts), width):
+        for line in wrapped_lines(commands_line_text(shortcuts, self._recipe_states, self.hide_small_processes), width):
             self._write(stdscr, row, 0, line, width, curses.A_BOLD)
             row += 1
         row += 1
@@ -413,7 +433,7 @@ class TuiApp:
             for row_offset, process in enumerate(visible_processes[start_index : start_index + visible_rows]):
                 row = table_top + row_offset
                 index = start_index + row_offset
-                row_text = process_row_text(index, process, layout)
+                row_text = process_row_text(index, process, layout, display_name=self._display_name(process))
                 attr = self._attr("selected") if self.selected_index is not None and index == self.selected_index else curses.A_NORMAL
                 self._write(stdscr, row, 0, row_text, width, attr)
 

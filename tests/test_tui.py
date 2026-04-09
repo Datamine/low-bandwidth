@@ -45,10 +45,29 @@ class TuiHelpersTests(unittest.TestCase):
         shortcuts = recipe_shortcuts(list(recipe_catalog("Darwin").values()))
         self.assertIn("a", shortcuts)
         self.assertIn("b", shortcuts)
-        self.assertEqual(shortcuts["a"].recipe_id, "pause-icloud-sync")
+        self.assertEqual(shortcuts["a"].recipe_id, "toggle-icloud-sync")
 
     def test_commands_line_includes_common_controls_without_presets(self) -> None:
-        self.assertEqual(commands_line_text({}), "Commands: q quit | r refresh | h hide<1KB | t stop | x kill")
+        self.assertEqual(
+            commands_line_text({}, {}, True),
+            "Commands: q quit | h [on] hide<1KB | t stop | x kill",
+        )
+
+    def test_commands_line_includes_toggle_states_for_recipes(self) -> None:
+        recipes = list(recipe_catalog("Darwin").values())
+        shortcuts = recipe_shortcuts(recipes)
+        self.assertEqual(
+            commands_line_text(
+                shortcuts,
+                {
+                    "toggle-icloud-sync": True,
+                    "toggle-app-store-downloads": False,
+                    "toggle-system-update-checks": True,
+                },
+                True,
+            ),
+            "Commands: q quit | h [on] hide<1KB | t stop | x kill | a [on] iCloud blocker | b [off] App Store blocker | c [on] Update check blocker",
+        )
 
     def test_format_bytes_uses_compact_units(self) -> None:
         self.assertEqual(format_bytes(512), "512B")
@@ -120,6 +139,12 @@ class TuiHelpersTests(unittest.TestCase):
         second.upload_rate_bps = 924
         second.download_rate_bps = 1001
         self.assertEqual(total_rate_text([first, second]), "Total Rate: 2.0K (1.0K Up / 1.0K Down)")
+
+    def test_process_row_text_can_show_killed_prefix(self) -> None:
+        process = self._process(42, "curl")
+        layout = table_layout([process], 96)
+        row = process_row_text(0, process, layout, display_name="[killed] curl")
+        self.assertIn("[killed] curl", row)
 
     def test_toggle_hide_small_processes_hides_rows_below_1kb(self) -> None:
         app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))

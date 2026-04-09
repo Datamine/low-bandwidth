@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from src.actions import ActionController, recipe_catalog
 from src.collector import BandwidthCollector
@@ -10,6 +11,7 @@ from src.tui import (
     detail_block_height,
     total_rate_text,
     process_identity,
+    status_text,
     TuiApp,
     format_bytes,
     header_row_text,
@@ -134,8 +136,9 @@ class TuiHelpersTests(unittest.TestCase):
         process.total_rate_bps = 576
 
         summary_lines = wrapped_lines(selected_summary_text(process), 32)
+        status_lines = wrapped_lines(status_text("Updated 12:00:00", [process]), 32)
         self.assertGreater(len(summary_lines), 1)
-        self.assertEqual(detail_block_height(process, 32), len(summary_lines) + 2)
+        self.assertEqual(detail_block_height(process, 32, "Updated 12:00:00", [process]), len(summary_lines) + 1 + len(status_lines))
 
     def test_process_identity_uses_pid_command_and_name(self) -> None:
         process = self._process(42, "curl")
@@ -149,6 +152,15 @@ class TuiHelpersTests(unittest.TestCase):
         second.instant_upload_rate_bps = 924
         second.instant_download_rate_bps = 1001
         self.assertEqual(total_rate_text([first, second]), "Total Rate: 2.0K (1.0K Up / 1.0K Down)")
+
+    def test_status_text_combines_message_and_total_rate(self) -> None:
+        process = self._process(100, "first")
+        process.instant_upload_rate_bps = 1024
+        process.instant_download_rate_bps = 512
+        self.assertEqual(
+            status_text("Enabled iCloud blocker", [process]),
+            "Status: Enabled iCloud blocker | Total Rate: 1.5K (1.0K Up / 512B Down)",
+        )
 
     def test_process_row_text_can_show_killed_prefix(self) -> None:
         process = self._process(42, "curl")
@@ -275,3 +287,64 @@ class TuiHelpersTests(unittest.TestCase):
         app._request_snapshot_refresh("Refreshing snapshot…")
         self.assertEqual(app.status_message, "Refreshing snapshot…")
         self.assertTrue(app._refresh_requested.is_set())
+
+    def test_apply_snapshot_preserves_recent_action_status_until_hold_expires(self) -> None:
+        app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))
+        process = self._process(100, "first")
+        app.snapshot = Snapshot(
+            supported=True,
+            platform="Linux",
+            collector="nethogs",
+            sample_seconds=2,
+            averaging_window_seconds=60,
+            processes=[process],
+            notices=[],
+        )
+        app.status_message = "Enabled iCloud blocker"
+        app._status_hold_until = 999.0
+
+        with patch("src.tui.time.monotonic", return_value=100.0):
+            app._apply_snapshot(
+                Snapshot(
+                    supported=True,
+                    platform="Linux",
+                    collector="nethogs",
+                    sample_seconds=2,
+                    averaging_window_seconds=60,
+                    processes=[process],
+                    notices=[],
+                )
+            )
+        self.assertEqual(app.status_message, "Enabled iCloud blocker")
+
+    def test_apply_snapshot_updates_status_after_hold_expires(self) -> None:
+        app = TuiApp(collector=BandwidthCollector(), actions=ActionController(system_name="Linux"))
+        process = self._process(100, "first")
+        app.snapshot = Snapshot(
+            supported=True,
+            platform="Linux",
+            collector="nethogs",
+            sample_seconds=2,
+            averaging_window_seconds=60,
+            processes=[process],
+            notices=[],
+        )
+        app.status_message = "Enabled iCloud blocker"
+        app._status_hold_until = 100.0
+
+        with (
+            patch("src.tui.time.monotonic", return_value=101.0),
+            patch("src.tui.time.strftime", return_value="12:00:00"),
+        ):
+            app._apply_snapshot(
+                Snapshot(
+                    supported=True,
+                    platform="Linux",
+                    collector="nethogs",
+                    sample_seconds=2,
+                    averaging_window_seconds=60,
+                    processes=[process],
+                    notices=[],
+                )
+            )
+        self.assertEqual(app.status_message, "Updated 12:00:00")

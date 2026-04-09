@@ -13,6 +13,7 @@ from .collector import BandwidthCollector
 from .models import ActionResult, ProcessUsage, Recipe, Snapshot
 
 AUTO_REFRESH_DELAY_SECONDS = 0.25
+STATUS_MESSAGE_HOLD_SECONDS = 3.0
 HIDE_SMALL_PROCESS_THRESHOLD_BYTES = 1024
 TABLE_BYTES_WIDTH = 8
 TABLE_RATE_WIDTH = 12
@@ -152,10 +153,15 @@ def selected_summary_text(selected: ProcessUsage) -> str:
     return f"Selected: {(selected.command or selected.name)} pid={selected.pid or '-'} total={format_bytes(selected.total_bytes)}"
 
 
-def detail_block_height(selected: ProcessUsage | None, width: int) -> int:
+def status_text(status_message: str, processes: list[ProcessUsage]) -> str:
+    return f"Status: {status_message} | {total_rate_text(processes)}"
+
+
+def detail_block_height(selected: ProcessUsage | None, width: int, status_message: str, processes: list[ProcessUsage]) -> int:
+    status_lines = wrapped_lines(status_text(status_message, processes), width)
     if selected is None:
-        return 2
-    return len(wrapped_lines(selected_summary_text(selected), width)) + 2
+        return 1 + len(status_lines)
+    return len(wrapped_lines(selected_summary_text(selected), width)) + 1 + len(status_lines)
 
 
 def process_identity(process: ProcessUsage | None) -> tuple[int | None, str | None, str] | None:
@@ -189,7 +195,7 @@ class TuiApp:
     _recipe_states: dict[str, bool] = field(default_factory=dict, init=False, repr=False)
     _killed_processes: set[tuple[int | None, str | None, str]] = field(default_factory=set, init=False, repr=False)
     _stopped_processes: set[tuple[int | None, str | None, str]] = field(default_factory=set, init=False, repr=False)
-    _preserve_status_on_refresh: bool = field(default=False, init=False, repr=False)
+    _status_hold_until: float = field(default=0.0, init=False, repr=False)
 
     def run(self, stdscr: curses.window) -> None:
         curses.curs_set(0)
@@ -290,8 +296,7 @@ class TuiApp:
         if previous_identity is not None and self.selected_index is None and process_count > 0:
             self.status_message = "Selected process disappeared on refresh."
             return
-        if self._preserve_status_on_refresh:
-            self._preserve_status_on_refresh = False
+        if time.monotonic() < self._status_hold_until:
             return
         self.status_message = f"Updated {time.strftime('%H:%M:%S')}"
 
@@ -346,7 +351,7 @@ class TuiApp:
     def _record_result(self, result: ActionResult) -> None:
         self.history.appendleft(result)
         self.status_message = f"{result.title}: {result.detail}"
-        self._preserve_status_on_refresh = True
+        self._status_hold_until = time.monotonic() + STATUS_MESSAGE_HOLD_SECONDS
 
     def _selected_process(self) -> ProcessUsage | None:
         visible_processes = self._visible_processes()
@@ -436,7 +441,7 @@ class TuiApp:
         self._write(stdscr, row, 0, header, width, curses.A_BOLD)
 
         table_top = row + 1
-        detail_height = detail_block_height(selected, width)
+        detail_height = detail_block_height(selected, width, self.status_message, visible_processes)
         detail_top = max(table_top + 6, height - detail_height - 1)
         visible_rows = max(1, detail_top - table_top - 1)
         start_index = self._table_start(visible_rows)
@@ -467,16 +472,11 @@ class TuiApp:
         width: int,
         selected: ProcessUsage | None,
     ) -> None:
+        status_lines = wrapped_lines(status_text(self.status_message, self._visible_processes()), width)
         if selected is None:
             self._write(stdscr, top, 0, "Selected: none", width, curses.A_BOLD)
-            self._write(
-                stdscr,
-                top + 1,
-                0,
-                f"Status: {self.status_message} | {total_rate_text(self._visible_processes())}",
-                width,
-                self._attr("muted"),
-            )
+            for offset, line in enumerate(status_lines):
+                self._write(stdscr, top + 1 + offset, 0, line, width, self._attr("muted"))
             return
 
         selected_lines = wrapped_lines(selected_summary_text(selected), width)
@@ -485,15 +485,8 @@ class TuiApp:
 
         next_row = top + len(selected_lines)
         self._write(stdscr, next_row, 0, f"Ports: {format_ports(selected.ports)}", width, curses.A_BOLD)
-
-        self._write(
-            stdscr,
-            next_row + 1,
-            0,
-            f"Status: {self.status_message} | {total_rate_text(self._visible_processes())}",
-            width,
-            self._status_attr(),
-        )
+        for offset, line in enumerate(status_lines):
+            self._write(stdscr, next_row + 1 + offset, 0, line, width, self._status_attr())
 
     def _table_start(self, visible_rows: int) -> int:
         process_count = len(self._visible_processes())

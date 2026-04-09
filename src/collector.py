@@ -23,7 +23,7 @@ _APP_PATH = re.compile(r"/(?P<bundle>[^/]+)\.app/")
 _NETHOGS_ROW = re.compile(
     r"^(?P<prefix>.+?)\s+(?P<sent>\d+(?:\.\d+)?)\s+(?P<received>\d+(?:\.\d+)?)$"
 )
-_NETHOGS_IDENTITY = re.compile(r"(?P<command>.+)/(?P<pid>\d+)/(?:[^/\s]+)$")
+_NETHOGS_TRAILING_IDENTITY = re.compile(r"/(?P<pid>\d+)/(?:[^/\s]+)$")
 _NETHOGS_REFRESH = "Refreshing:"
 _SS_PID = re.compile(r"pid=(?P<pid>\d+)")
 
@@ -49,6 +49,11 @@ class SamplePoint:
     timestamp: float
     download_bytes: int
     upload_bytes: int
+
+
+class NethogsIdentity(NamedTuple):
+    command: str
+    pid: int
 
 
 class BandwidthCollector:
@@ -318,15 +323,15 @@ def parse_nethogs_output(output: str, sample_seconds: int) -> list[ParsedRow]:
         identity = _nethogs_identity(match.group("prefix"))
         if identity is None:
             continue
-        if identity.group("pid") == "0":
+        if identity.pid == 0:
             continue
 
         sent_rate = float(match.group("sent"))
         received_rate = float(match.group("received"))
-        command = identity.group("command")
+        command = identity.command
         results.append(
             ParsedRow(
-                pid=int(identity.group("pid")),
+                pid=identity.pid,
                 name=_program_name(command),
                 download_bytes=int(received_rate * 1024 * sample_window),
                 upload_bytes=int(sent_rate * 1024 * sample_window),
@@ -500,15 +505,25 @@ def _normalize_column(name: str) -> str:
     return name.strip().casefold().replace(" ", "_")
 
 
-def _nethogs_identity(prefix: str) -> re.Match[str] | None:
-    for token in prefix.split():
-        match = _NETHOGS_IDENTITY.fullmatch(token)
-        if match is not None:
-            return match
-    return None
+def _nethogs_identity(prefix: str) -> NethogsIdentity | None:
+    stripped = prefix.strip()
+    match = _NETHOGS_TRAILING_IDENTITY.search(stripped)
+    if match is None:
+        return None
+    command = stripped[: match.start()].strip()
+    if not command:
+        return None
+    if " " in command:
+        first, remainder = command.split(maxsplit=1)
+        if remainder.startswith("/") and "/" not in first and ":" not in first:
+            command = remainder
+    return NethogsIdentity(command=command, pid=int(match.group("pid")))
 
 
 def _program_name(command: str) -> str:
+    friendly = _friendly_process_name(command)
+    if friendly is not None:
+        return friendly
     command = command.rstrip("/")
     if not command:
         return command
@@ -588,19 +603,20 @@ def _merge_rows(
 ) -> list[ProcessUsage]:
     merged: dict[tuple[int | None, str], ProcessUsage] = {}
     for row in rows:
-        key = (row.pid, row.name)
         process_info = process_map.get(row.pid) if row.pid is not None else None
+        canonical_name = _canonical_process_name(row.name, process_info)
+        key = (row.pid, canonical_name)
         ports = port_map.get(row.pid, []) if row.pid is not None else []
         existing = merged.get(key)
         if existing is None:
-            display_name = process_info.bundle_name if process_info is not None and process_info.bundle_name is not None else row.name
+            display_name = _display_name(canonical_name, process_info)
             command = process_info.command if process_info is not None else None
             executable = process_info.executable if process_info is not None else None
             bundle_name = process_info.bundle_name if process_info is not None else None
-            is_background = process_info.is_background if process_info is not None else _looks_background(row.name)
+            is_background = process_info.is_background if process_info is not None else _looks_background(canonical_name)
             existing = ProcessUsage(
                 pid=row.pid,
-                name=row.name,
+                name=canonical_name,
                 display_name=display_name,
                 command=command,
                 executable=executable,
@@ -672,6 +688,41 @@ def _bundle_name_from_command(command: str) -> str | None:
     if match is None:
         return None
     return match.group("bundle")
+
+
+def _canonical_process_name(row_name: str, process_info: ProcessInfo | None) -> str:
+    if process_info is not None:
+        for candidate in (process_info.executable, process_info.command):
+            friendly = _friendly_process_name(candidate)
+            if friendly is not None:
+                return friendly
+    friendly_row_name = _friendly_process_name(row_name)
+    if friendly_row_name is not None:
+        return friendly_row_name
+    return row_name.strip()
+
+
+def _display_name(name: str, process_info: ProcessInfo | None) -> str:
+    if process_info is not None and process_info.bundle_name is not None:
+        return process_info.bundle_name
+    return name
+
+
+def _friendly_process_name(candidate: str | None) -> str | None:
+    if candidate is None:
+        return None
+    stripped = candidate.strip()
+    if not stripped:
+        return None
+
+    token = stripped.split(maxsplit=1)[0].rstrip(":")
+    if not token:
+        return None
+    if token.startswith("/"):
+        token = Path(token).name.rstrip(":")
+    if not token or token.isdigit():
+        return None
+    return token
 
 
 def _linux_interfaces() -> list[str]:

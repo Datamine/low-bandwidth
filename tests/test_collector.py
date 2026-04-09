@@ -53,6 +53,18 @@ class CollectorParsingTests(unittest.TestCase):
         self.assertEqual(rows[1].pid, 654)
         self.assertEqual(rows[1].upload_bytes, 256)
 
+    def test_parse_nethogs_trace_output_keeps_human_readable_ssh_name(self) -> None:
+        raw = "\n".join(
+            [
+                "Refreshing:",
+                "sshd: v@pts/2/2862891/1000 0.182812 0.08125",
+            ]
+        )
+        rows = parse_nethogs_output(raw, sample_seconds=2)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].pid, 2862891)
+        self.assertEqual(rows[0].name, "sshd")
+
     def test_parse_ss_output_tracks_ports_by_pid(self) -> None:
         raw = "\n".join(
             [
@@ -247,6 +259,48 @@ class CollectorParsingTests(unittest.TestCase):
         self.assertEqual(snapshot.processes[0].display_name, "curl")
         self.assertIsNone(snapshot.processes[0].command)
         self.assertEqual(snapshot.processes[0].ports, ["58124->443/tcp"])
+
+    def test_linux_snapshot_prefers_ps_name_for_human_readable_display(self) -> None:
+        collector = BandwidthCollector(sample_seconds=2)
+        nethogs_output = "\n".join(
+            [
+                "Refreshing:",
+                "sshd: v@pts/2/2862891/1000 0.182812 0.08125",
+            ]
+        )
+        ps_output = "2862891 sshd: sshd: v@pts/2"
+        with (
+            patch("src.collector.platform.system", return_value="Linux"),
+            patch("src.collector.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
+            patch(
+                "src.collector.subprocess.run",
+                side_effect=[
+                    subprocess.CompletedProcess(
+                        args=["nethogs"],
+                        returncode=0,
+                        stdout="",
+                        stderr=nethogs_output,
+                    ),
+                    subprocess.CompletedProcess(
+                        args=["ps"],
+                        returncode=0,
+                        stdout=ps_output,
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(
+                        args=["ss"],
+                        returncode=0,
+                        stdout="",
+                        stderr="",
+                    ),
+                ],
+            ),
+        ):
+            snapshot = collector.snapshot()
+        self.assertTrue(snapshot.supported)
+        self.assertEqual(snapshot.processes[0].name, "sshd")
+        self.assertEqual(snapshot.processes[0].display_name, "sshd")
+        self.assertEqual(snapshot.processes[0].command, "sshd: v@pts/2")
 
     def test_rolling_average_keeps_recent_process_visible(self) -> None:
         collector = BandwidthCollector(sample_seconds=2)

@@ -1,0 +1,317 @@
+:root {
+  --bg: #08111f;
+  --bg-alt: #101d32;
+  --panel: rgba(12, 22, 38, 0.84);
+  --line: rgba(160, 190, 224, 0.18);
+  --text: #f0f6ff;
+  --muted: #99abc0;
+  --accent: #ffb648;
+  --accent-strong: #ff7d36;
+  --good: #6bdfb1;
+  --bad: #ff7d76;
+  --shadow: 0 24px 60px rgba(1, 6, 18, 0.46);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(255, 182, 72, 0.2), transparent 32%),
+    radial-gradient(circle at top right, rgba(47, 149, 255, 0.18), transparent 28%),
+    linear-gradient(180deg, #07101d 0%, #09182b 36%, #060c17 100%);
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.75), transparent);
+  pointer-events: none;
+}
+
+.shell {
+  width: min(1180px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 36px 0 56px;
+}
+
+.hero,
+.panel {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.hero {
+  padding: 32px;
+  overflow: hidden;
+}
+
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: auto -16% -35% auto;
+  width: 420px;
+  height: 420px;
+  background: radial-gradient(circle, rgba(255, 182, 72, 0.28), transparent 62%);
+}
+
+.panel {
+  margin-top: 20px;
+  padding: 24px;
+}
+
+.eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  color: var(--accent);
+}
+
+h1,
+h2 {
+  margin: 0;
+  line-height: 1.02;
+}
+
+h1 {
+  max-width: 13ch;
+  font-size: clamp(2.3rem, 4vw, 4.6rem);
+}
+
+.lede,
+.panel-head p,
+.notices,
+.history-item p,
+.recipe-card p {
+  color: var(--muted);
+}
+
+.lede {
+  max-width: 66ch;
+  margin: 16px 0 0;
+  font-size: 1rem;
+}
+
+.status-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.summary-card,
+.recipe-card,
+.history-item {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(8, 16, 28, 0.52);
+}
+
+.summary-card strong,
+.recipe-card h3,
+.history-item h3 {
+  display: block;
+  margin-top: 8px;
+  font-size: 1rem;
+}
+
+.label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+.panel-head p {
+  margin: 0;
+  max-width: 44ch;
+}
+
+.toolbar {
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+input[type="search"] {
+  width: min(320px, 100%);
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(5, 10, 18, 0.84);
+  color: var(--text);
+}
+
+.recipe-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.recipe-card h3,
+.history-item h3 {
+  margin: 0;
+}
+
+.recipe-meta,
+.history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.pill.alert {
+  border-color: rgba(255, 125, 118, 0.35);
+  color: #ffc5c1;
+}
+
+.pill.good {
+  border-color: rgba(107, 223, 177, 0.35);
+  color: #baf9de;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 14px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: var(--muted);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.process-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.process-name small {
+  color: var(--muted);
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #241302;
+  font-weight: 700;
+}
+
+button.secondary {
+  background: rgba(17, 32, 53, 0.9);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+button.danger {
+  background: linear-gradient(135deg, #ff8d81, #ff5b6a);
+  color: white;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.history {
+  display: grid;
+  gap: 12px;
+}
+
+.history-item.ok {
+  border-color: rgba(107, 223, 177, 0.26);
+}
+
+.history-item.fail {
+  border-color: rgba(255, 125, 118, 0.28);
+}
+
+code {
+  font-family: "SFMono-Regular", "Roboto Mono", monospace;
+  font-size: 0.92em;
+}
+
+@media (max-width: 760px) {
+  .shell {
+    width: min(100vw - 18px, 1180px);
+    padding-top: 18px;
+  }
+
+  .hero,
+  .panel {
+    border-radius: 20px;
+    padding: 18px;
+  }
+
+  .panel-head,
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  th:nth-child(4),
+  td:nth-child(4),
+  th:nth-child(7),
+  td:nth-child(7) {
+    display: none;
+  }
+}

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Low Bandwidth</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="backdrop"></div>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Plane Mode, but useful</p>
+        <h1>See what is burning through your connection and shut it down fast.</h1>
+        <p class="lede">
+          Low Bandwidth samples live process traffic with <code>nettop</code> on macOS and <code>nethogs</code> on
+          Linux, ranks the heaviest consumers, and gives you one-click process stops plus a few focused conservation
+          presets.
+        </p>
+        <div class="status-row">
+          <div class="summary-card">
+            <span class="label">Collector</span>
+            <strong id="collector-name">Loading</strong>
+          </div>
+          <div class="summary-card">
+            <span class="label">Sample window</span>
+            <strong id="sample-window">-</strong>
+          </div>
+          <div class="summary-card">
+            <span class="label">Last refresh</span>
+            <strong id="last-refresh">-</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Quick Presets</h2>
+          <p>Built-in actions change by platform instead of pretending every machine has the same background services.</p>
+        </div>
+        <div id="recipes" class="recipe-grid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Top Traffic</h2>
+          <p>Rolling one-minute process averages built from short live traffic samples.</p>
+        </div>
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Filter apps or daemons" />
+          <span id="notices" class="notices"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Process</th>
+                <th>PID</th>
+                <th>Ports</th>
+                <th>Down</th>
+                <th>Up</th>
+                <th>Total</th>
+                <th>Rate</th>
+                <th>Type</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="process-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Action Log</h2>
+          <p>Recent process signals and preset results.</p>
+        </div>
+        <div id="history" class="history"></div>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

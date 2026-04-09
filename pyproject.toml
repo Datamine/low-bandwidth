@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "low-bandwidth"
+version = "0.1.0"
+description = "Bandwidth conservation application for MacOS"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+]
+
+[project.scripts]
+low-bandwidth = "run:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+src = ["static/*.css", "static/*.html", "static/*.js"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+# Allow autofix for all enabled rules (when `--fix`) is provided.
+
+[tool.ruff.lint]
+extend-select = ["I"] # adds isort to ruff
+select = ["ALL"]
+per-file-ignores = { "lambdas/**" = ["INP001"], "tests/**" = ["SLF001", "S105", "PLC0415"] }  # lambdas are self-contained; tests can access private members, use test credentials, and import inside functions
+ignore = [
+    # not interested in docstring linting
+    "D",
+    "ERA001", # flag commented-out code
+    "TD002", # missing issue link after TODO
+    "TD003", # TODO should start with an uppercase word
+    "FIX002", # flag TODO comments
+    "T201", # flag print statements
+    "PTH", # encourage use of Pathlib over os.path
+    "UP007", # bad new union type annotation
+    "PLR0913", # too many arguments to function def
+    "G004",
+    "S311",
+    "PLR2004", # magic value warnings
+    "FBT001", # allow bools in function params
+    "S101", # asserts are okay
+    "DTZ005", # absolutely do not want timezone aware timestamps
+    "DTZ006", # same
+    "FBT002",
+    "TID252", # allow relative imports from parent modules
+    "FAST001", # allow explicit response_model in FastAPI routes
+    "EM101", # allow string literals in exceptions
+    "EM102", # allow f-string literals in exceptions
+    "TRY003", # allow long messages in exceptions
+]
+fixable = ["A", "B", "C", "D", "E", "F", "COM", "I"]
+unfixable = []
+
+[tool.ty.rules]
+redundant-cast = "warn"
+unused-ignore-comment = "warn"
+# Functional enum creation (StrEnum("Name", {...})) is not understood by ty
+invalid-type-form = "ignore"
+call-non-callable = "ignore"
+unresolved-attribute = "ignore"
+# optional: mypy ignore_missing_imports
+# unresolved-import = "ignore"
+# optional: warn about fragile conditional imports
+# possibly-missing-import = "warn"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
